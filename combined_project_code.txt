@@ -1,0 +1,2384 @@
+=========================================
+FILE: q_network.py
+=========================================
+
+import jax
+import jax.numpy as jnp
+from flax import linen as nn
+    
+class SoftQNetwork_skip(nn.Module):
+    hidden_size1: int = 512  
+    hidden_size2: int = 512  
+
+    @nn.compact
+    def __call__(self, x, a):
+        concatenated_input = jnp.concatenate([x, a], axis=-1)
+        
+        x = nn.Dense(self.hidden_size1)(concatenated_input)
+        x = nn.relu(x)
+        x = jnp.concatenate([x, concatenated_input], axis=-1)
+
+        x = nn.Dense(self.hidden_size2)(x)
+        x = nn.relu(x)
+        x = jnp.concatenate([x, concatenated_input], axis=-1)
+
+        x = nn.Dense(1)(x)
+        return x
+    
+
+if __name__ == "__main__":
+
+    observation_size = 49
+    action_size = 12
+    batch_size = 7
+    
+    model = SoftQNetwork_skip(hidden_size1=512, hidden_size2=512)
+
+    rng_key = jax.random.PRNGKey(0)
+    
+    # Dummy inputs for shape inference
+    dummy_obs = jnp.ones((batch_size, observation_size))  
+    dummy_act = jnp.ones((batch_size, action_size))     
+    
+    params = model.init(rng_key, dummy_obs, dummy_act)['params']
+    
+    q_values = model.apply({'params': params}, dummy_obs, dummy_act)
+    print("Q Values:", q_values.shape)
+
+=========================================
+FILE: agent.py
+=========================================
+
+import jax
+import jax.numpy as jnp
+from flax import linen as nn
+from jax.scipy.special import logsumexp
+
+LOG_STD_MAX = 2
+LOG_STD_MIN = -5
+
+class ActorSimple_skip(nn.Module):
+    action_space_size: int
+    action_space_high: float
+    action_space_low: float
+    actor_fc1_size: int
+    actor_fc2_size: int
+
+    @nn.compact
+    def __call__(self, obs):
+        x = nn.Dense(self.actor_fc1_size, name='fc1')(obs)
+        x = nn.relu(x)
+        x = jnp.concatenate((obs, x), axis=-1)
+        x = nn.Dense(self.actor_fc2_size, name='fc2')(x)
+        x = nn.relu(x)
+        x = jnp.concatenate((obs, x), axis=-1)
+        
+        mean = nn.Dense(self.action_space_size, name='mean')(x)
+        log_std = nn.Dense(self.action_space_size, name='logstd')(x)
+        log_std = jnp.tanh(log_std)
+        log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)
+
+        return mean, log_std
+
+    def get_action(self, params, x, rng_key):
+        mean, log_std = self.apply({'params': params}, x)
+        
+        std = jnp.exp(log_std)
+        
+        normal = jax.random.normal(rng_key, shape=mean.shape)
+        x_t = mean + std * normal
+        y_t = jnp.tanh(x_t)
+
+        action_scale = (self.action_space_high - self.action_space_low) / 2.0
+        action_bias = (self.action_space_high + self.action_space_low) / 2.0
+
+        action = y_t * action_scale + action_bias
+
+        log_prob = -0.5 * (((x_t - mean) / std) ** 2 + 2 * log_std + jnp.log(2 * jnp.pi))
+        log_prob -= jnp.log(action_scale * (1 - y_t ** 2) + 1e-6)
+        log_prob = log_prob.sum(axis=-1, keepdims=True) 
+
+        mean = jnp.tanh(mean) * action_scale + action_bias
+
+        return action, log_prob, mean
+    
+
+if __name__ == "__main__":
+    observation_size = 73
+    action_size = 18   
+    batch_size = 7
+    
+    agent_rng_key, init_key = jax.random.split(jax.random.PRNGKey(0))
+
+    model = ActorSimple_skip(
+        action_space_size=action_size, 
+        action_space_high=1.0, 
+        action_space_low=-1.0, 
+        actor_fc1_size=512, 
+        actor_fc2_size=512
+    )
+    
+    # Dummy input for shape inference
+    dummy_x = jnp.ones((batch_size, observation_size))  
+    
+    params = model.init(init_key, dummy_x)['params']
+    mean, logstd = model.apply({'params': params}, dummy_x)
+    print('Mean shape:', mean.shape)
+    print('Logstd shape:', logstd.shape)
+    
+
+    agent_rng_key, key = jax.random.split(agent_rng_key, 2)
+    action, log_prob, mean = model.get_action(params, dummy_x, key)
+
+    print("Action shape:", action.shape)
+    print("Log Probability shape:", log_prob.shape)
+    print("Scaled mean shape:", mean.shape)
+
+=========================================
+FILE: sac_my_flax.py
+=========================================
+
+import logging
+import os
+import jax
+from queue import Queue
+from flax import serialization
+import numpy as np
+
+# Импортируем все наши модули
+from worker import WorkerThread
+from buffer import BufferThread
+from trainer import TrainingThread
+from arena import BattleArena
+from agent import ActorSimple_skip
+
+# Настройка логирования
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+logging.basicConfig(
+    format='%(asctime)s [%(threadName)s] %(levelname)s: %(message)s',
+    level=logging.WARNING,
+    force=True
+)
+
+# Определение устройств (GPU/CPU)
+devices = jax.devices()
+print(f"Доступные устройства: {devices}")
+worker_device = devices[0]
+trainer_device = devices[1] if len(devices) > 1 else worker_device
+
+# --- ГЛОБАЛЬНЫЙ КОНФИГ ОБУЧЕНИЯ ---
+config = dict(
+    seed = 42,
+    worker_device=worker_device,
+    trainer_device=trainer_device,
+
+    # Сколько пауков бегает одновременно
+    worker_batch_size=256,  # Обучаются
+    validation_batch_size=32, # Сдают экзамен (всего будет 512+64 = 576 сред)
+    
+    trainer_batch_size=1024, # Размер пачки данных для обучения нейросети
+
+    buffer_size=1_000_000,  # Размер памяти (шагов)
+    random_steps_count=1000, # Сколько шагов делать случайно в начале для прогрева
+    
+    # Гиперпараметры SAC
+    initial_alpha = 1.0,
+    autotune_alpha = True,
+    tau = 0.005,
+    gamma = 0.985,
+    q_lr = 0.0003, # Немного снизил для стабильности 18-ти моторов
+    p_lr = 0.0003,
+    
+    total_steps=2_000_000, # Общее количество обновлений нейросети
+    warmup_steps=10_000,   # Шаги, за которые скорость обучения вырастет до рабочей
+    
+    report_to_tensorboard=True, # Включаем логи (можно смотреть через tensorboard --logdir runs)
+    report_to_wandb=False       # Выключил по умолчанию, если нет аккаунта
+)
+
+# Инициализация ключей случайности
+_, worker_key, trainer_key, init_key = jax.random.split(jax.random.key(config['seed']), 4)
+
+# 1. Создаем симуляцию (тело)
+env = BattleArena()
+
+# 2. Создаем нейросеть (мозг)
+agent_skip = ActorSimple_skip(
+    env.action_space_shape[0], # 18 моторов
+    env.ctrlrange_high, 
+    env.ctrlrange_low,
+    512, 512
+) 
+
+# Инициализируем параметры весов
+state0 = env.reset(jax.random.key(0))
+obs = state0['obs'] # ИСПРАВЛЕНО: убрали [0]
+observations_count = jax.numpy.prod(jax.numpy.array(obs.shape)).item()
+agent_params = agent_skip.init(init_key, jax.numpy.ones((1, observations_count)))['params']
+
+# Расчет общего количества параллельных сред
+total_batch_size = config['worker_batch_size'] + config['validation_batch_size']
+
+# 3. Запускаем Буфер памяти
+bt = BufferThread(
+    config['buffer_size'], 
+    config['worker_batch_size'], 
+    env.observation_space_shape, 
+    env.action_space_shape
+)
+
+# Очередь для передачи весов от тренера воркеру
+worker_agent_queue = Queue(maxsize=8)
+
+# 4. Запускаем Воркера (сборщика опыта)
+wt = WorkerThread(
+    config=config,
+    env=env, 
+    rng_key=worker_key, 
+    result_queue=bt.input_queue, 
+    agent_queue=worker_agent_queue, 
+    agent_config=dict(
+        trainee_func=agent_skip.get_action,
+        validation_agent_func=agent_skip.get_action,
+        ref_agent_params=[], # Пусто, врагов нет
+        validation_agent_params=[] # Пусто, будем использовать trainee_params
+    ),
+    name='Spider-Worker-0'
+)
+
+# 5. Запускаем Тренера (обновителя мозгов)
+tt = TrainingThread(
+    config=config,
+    buffer_thread=bt,
+    agent_queue=worker_agent_queue,
+    agent=agent_skip,
+    agent_params=agent_params,
+    rng_key=trainer_key,
+    observation_space_shape=env.observation_space_shape,
+    action_space_shape=env.action_space_shape,
+    worker_thread=wt,
+    name='Spider-Trainer'
+)
+
+# --- ПУСК ---
+# Проверяем, есть ли сохраненный чекпоинт в папкеUnnamed, чтобы продолжить обучение
+resume_path = 'good_modes/last'
+
+if os.path.exists(resume_path):
+    print("\n" + "="*50)
+    print("-> ОБНАРУЖЕН ПРЕДЫДУЩИЙ ЧЕКПОИНТ!")
+    print(f"-> Загружаю веса, критиков и оптимизаторы из: {resume_path}")
+    
+    # Загружаем полное состояние обучения
+    tt.load_state(resume_path)
+    
+    norm_file = os.path.join(resume_path, 'obs_norm_last.npz')
+    if os.path.exists(norm_file):
+        print(f"-> Загружаю статистику нормализации датчиков: {norm_file}")
+        obs_norm_values = np.load(norm_file)
+        
+        # Переносим массивы на JAX-девайс воркера
+        mean_jax = jax.device_put(jax.numpy.array(obs_norm_values['obs_mean']), wt.device)
+        var_jax = jax.device_put(jax.numpy.array(obs_norm_values['obs_var']), wt.device)
+        
+        # Записываем загруженные данные напрямую в "мозг" воркера
+        wt.running_obs_mean_std.mean = mean_jax
+        wt.running_obs_mean_std.var = var_jax
+        wt.obs_rms_mean = mean_jax
+        wt.obs_rms_var = var_jax
+        
+        # Восстанавливаем счетчик шагов нормализации
+        if 'obs_count' in obs_norm_values:
+            wt.running_obs_mean_std.count = float(obs_norm_values['obs_count'])
+            print(f"-> Счетчик шагов нормализации успешно восстановлен: {wt.running_obs_mean_std.count}")
+        else:
+            wt.running_obs_mean_std.count = 1_000_000.0
+            print("-> Предупреждение: obs_count не найден. Установлен фоллбек 1,000,000.0.")
+            
+        print("-> Нормализация датчиков успешно восстановлена!")
+    else:
+        print("-> Предупреждение: obs_norm_last.npz не найден в папке чекпоинта. Будет использована дефолтная статистика.")
+    
+    # Синхронизируем шаги воркера с тренером
+    if wt is not None:
+        wt.step = tt.current_step
+        
+    print(f"-> Состояние успешно восстановлено. Продолжаем обучение с шага {tt.current_step}!")
+    print("="*50 + "\n")
+else:
+    print("\n" + "="*50)
+    print("-> Предыдущий чекпоинт не найден. Начинаем обучение с нуля.")
+    print("="*50 + "\n")
+# ==========================================
+# === ЗАПУСК ПОТОКОВ ===
+# ==========================================
+print("Запуск системы обучения паука-спасателя...")
+bt.start()
+wt.start()
+tt.start()
+
+try:
+    tt.join() # Ждем окончания (2 млн шагов)
+except KeyboardInterrupt:
+    print("\nОстановка обучения пользователем...")
+    wt.running = False
+    tt.running = False
+
+
+# ==========================================
+# === СОХРАНЕНИЕ ФИНАЛЬНОГО РЕЗУЛЬТАТА ===
+# ==========================================
+path_to_save = 'checkpoints/final_quadruped_model'
+
+# Сохраняем финальные веса
+tt.save_state(path_to_save)
+
+# Сохраняем финальную нормализацию датчиков
+os.makedirs(path_to_save, exist_ok=True)
+np.savez(
+    os.path.join(path_to_save, 'obs_norm.npz'), 
+    obs_mean=jax.device_get(wt.running_obs_mean_std.mean), 
+    obs_var=jax.device_get(wt.running_obs_mean_std.var),
+    obs_count=float(wt.running_obs_mean_std.count)
+)
+
+print(f"\nОбучение завершено. Итоговая модель и obs_norm.npz сохранены в {path_to_save}")
+
+=========================================
+FILE: running_mean_std_jax.py
+=========================================
+
+# running_mean_std_jax.py
+import jax.numpy as jnp
+import threading
+from typing import Tuple
+
+class RunningMeanStd:
+    def __init__(self, epsilon: float = 1e-4, shape: Tuple[int, ...] = ()):
+        """
+        Calculates the running mean and std of a data stream.
+        Thread-safe version using threading.Lock.
+        """
+        self.mean = jnp.zeros(shape)
+        self.var = jnp.ones(shape)
+        self.count = epsilon
+        self._lock = threading.Lock()
+
+    def get_stats(self) -> Tuple[jnp.ndarray, jnp.ndarray, float]:
+        """Потокобезопасный метод для одновременного получения mean, var и count."""
+        with self._lock:
+            return self.mean, self.var, self.count
+
+    def set_stats(self, mean: jnp.ndarray, var: jnp.ndarray, count: float):
+        """Потокобезопасный метод для одновременной записи параметров."""
+        with self._lock:
+            self.mean = mean
+            self.var = var
+            self.count = count
+
+    def copy(self) -> "RunningMeanStd":
+        new_object = RunningMeanStd(shape=self.mean.shape)
+        with self._lock:
+            new_object.mean = self.mean
+            new_object.var = self.var
+            new_object.count = self.count
+        return new_object
+
+    def combine(self, other: "RunningMeanStd") -> None:
+        other_mean, other_var, other_count = other.get_stats()
+        self.update_from_moments(other_mean, other_var, other_count)
+
+    def update(self, arr: jnp.ndarray) -> None:
+        batch_mean = jnp.mean(arr, axis=0)
+        batch_var = jnp.var(arr, axis=0)
+        batch_count = arr.shape[0]
+        self.update_from_moments(batch_mean, batch_var, batch_count)
+        
+
+    def update_from_moments(self, batch_mean: jnp.ndarray, batch_var: jnp.ndarray, batch_count: float) -> None:
+        with self._lock:
+            delta = batch_mean - self.mean
+            tot_count = self.count + batch_count
+
+            new_mean = self.mean + delta * batch_count / tot_count
+            m_a = self.var * self.count
+            m_b = batch_var * batch_count
+            m_2 = m_a + m_b + jnp.square(delta) * self.count * batch_count / tot_count
+            new_var = m_2 / tot_count
+
+            new_count = batch_count + self.count
+
+            self.mean = new_mean
+            self.var = new_var
+            self.count = new_count
+
+=========================================
+FILE: worker.py
+=========================================
+
+import threading
+from queue import Queue
+import logging 
+
+import jax
+from jax import jit, vmap
+from jax import numpy as jp
+import time
+from collections import deque
+import numpy as np
+import sys
+from flax import serialization
+import os
+from running_mean_std_jax import RunningMeanStd
+
+np.set_printoptions(threshold=sys.maxsize)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+logging.basicConfig(
+    format='%(asctime)s [%(threadName)s] %(levelname)s: %(message)s',
+    level=logging.WARNING
+)
+
+class WorkerThread(threading.Thread):
+    def __init__(self, config, env, rng_key, result_queue: Queue, agent_queue:Queue, agent_config, name='Worker Thread'):
+        super(WorkerThread, self).__init__(name=name)
+        self.daemon = True
+        self.config = config
+        self.agent_config = agent_config
+        
+        self.output_queue = result_queue
+        self.agent_queue = agent_queue
+        self.running = False
+        self.device = config['worker_device']
+        
+        self.env_batch_size = config['worker_batch_size']
+        self.validation_batch_size = 64 
+        self.total_batch_size = self.env_batch_size + self.validation_batch_size
+
+        self.random_steps_count = config['random_steps_count']
+
+        self.validant_last_reward = None
+        self.validant_best_reward = None
+        
+        self.validation_steps = 2000
+        self.validation_start = 2000
+        
+        self.step = 0
+        self.env = env
+        
+        logger.debug(f'Total batch size: {self.total_batch_size}')
+        
+        # Оптимизировано: Накопитель наград теперь хранится и обрабатывается на CPU через NumPy
+        self._episode_rewards = np.zeros((self.env_batch_size, 1))
+        
+        # Инициализация ключей JAX
+        self.rng_key, key0 = jax.device_put(jax.random.split(rng_key, 2), device=self.device)
+        self.env_rng_key = jax.device_put(jax.random.split(key0, self.total_batch_size), device=self.device)
+        
+        self.batched_reset = vmap(self.env.reset)
+        self.batched_step = jit(vmap(self.env.step))
+        
+        self.jit_agent_step = jit(self.agent_step) 
+        self.jit_random_step = jit(self.random_step)
+        self.jit_reset = jit(self.batched_reset)
+        
+        self.normalize_obs = True
+        
+        self.running_obs_mean_std = RunningMeanStd(shape=self.env.observation_space_shape)
+        
+        if self.normalize_obs:
+            norm_path = 'obs-norm/obs_norm_last.npz'
+            if os.path.exists(norm_path):
+                obs_norm_values = np.load(norm_path)
+                self.obs_rms_mean = jax.device_put(jax.numpy.array(obs_norm_values['obs_mean']), device=self.device)
+                self.obs_rms_var = jax.device_put(jax.numpy.array(obs_norm_values['obs_var']),  device=self.device)
+                if 'obs_count' in obs_norm_values:
+                    self.running_obs_mean_std.count = float(obs_norm_values['obs_count'])
+            else:
+                self.obs_rms_mean = jax.device_put(jax.numpy.zeros(self.env.observation_space_shape), device=self.device)
+                self.obs_rms_var = jax.device_put(jax.numpy.ones(self.env.observation_space_shape), device=self.device)
+        
+        self.episode_reward = deque(maxlen=5)
+
+        self.best_agent_heights = []
+        self.best_agent_xs = [] 
+        self.best_agent_ys = []
+
+        self.plot_env_idx = self.env_batch_size
+
+        self.local_buffer_size = 16  # Размер "ведра" (накапливаем 16 шагов)
+        self.local_obs = []
+        self.local_next_obs = []
+        self.local_actions = []
+        self.local_rewards = []
+        self.local_terminated = []
+        
+    def random_step(self, env_state, inference_key):
+        k = 1.00 
+        obs_raw = env_state['obs']  # Сохраняем сырое наблюдение
+        
+        action = jax.random.uniform(
+            inference_key, 
+            (self.total_batch_size, self.env.action_space_shape[0]),
+            minval=k * self.env.ctrlrange_low, 
+            maxval=k * self.env.ctrlrange_high
+        )
+        
+        state, true_obs, true_reward, terminated, validation_rewards = self.batched_step(env_state, action)
+        
+        validation_terminated = jp.zeros(1)[0]
+        validation_reward = jp.zeros(1)[0]
+        
+        # Возвращаем obs_raw и true_obs (сырые) вместо нормализованных
+        return state, action, obs_raw, true_obs, true_reward, terminated, validation_terminated, validation_reward
+
+    def agent_step(self, env_state, inference_key, trainee_params, validant_params):
+        train_key, val_key = jax.random.split(inference_key, 2)
+        
+        trainee_func = self.agent_config['trainee_func']
+        
+        obs_raw = env_state['obs']
+        agent_obs = self.normalize_obs_if_needed(obs_raw)  # Нормализуем ТОЛЬКО для инференса актера
+        
+        action_trainee, _, _ = trainee_func(
+            trainee_params, 
+            agent_obs[:self.env_batch_size], 
+            train_key
+        )
+        
+        action_val, _, _ = trainee_func(
+            trainee_params, 
+            agent_obs[self.env_batch_size:], 
+            val_key
+        )
+        
+        combined_actions = jax.numpy.concatenate([action_trainee, action_val], axis=0)
+        
+        state, true_obs, true_reward, terminated, validation_rewards = self.batched_step(env_state, combined_actions)
+        
+        validation_terminated_count = jax.numpy.sum(terminated[self.env_batch_size:])
+        validation_reward_sum = jax.numpy.sum(validation_rewards[self.env_batch_size:])
+        
+        # Возвращаем obs_raw и true_obs (сырые) вместо нормализованных для записи в буфер
+        return (state, combined_actions, obs_raw, true_obs, 
+                true_reward, terminated, 
+                validation_terminated_count, validation_reward_sum)
+
+    def perform_step(self, state0, step_fun, agent_params=None):
+        inference_key, self.rng_key = jax.random.split(self.rng_key, 2)
+
+        self.running_obs_mean_std.update(state0['obs'])
+        
+        if self.normalize_obs:
+            self.obs_rms_mean = self.running_obs_mean_std.mean
+            self.obs_rms_var = self.running_obs_mean_std.var
+
+        res = step_fun(state0, inference_key, *agent_params) if agent_params is not None else step_fun(state0, inference_key)
+        state, action, obs, next_obs, reward, terminated, val_term, val_rew = res
+        
+        # Выделяем нужные батчи на GPU без копирования на CPU
+        obs_gpu = obs[:self.env_batch_size]
+        next_obs_gpu = next_obs[:self.env_batch_size]
+        action_gpu = action[:self.env_batch_size]
+        reward_gpu = reward[:self.env_batch_size]
+        terminated_gpu = terminated[:self.env_batch_size]
+
+        # Для подсчета метрик нам все еще нужны награды на CPU.
+        # Но это крошечные массивы (всего 1 число на среду), они копируются мгновенно.
+        reward_cpu, terminated_cpu = jax.device_get((reward_gpu, terminated_gpu))
+        self.compute_metrics_cpu(reward_cpu, terminated_cpu)
+
+        # Накапливаем шаги прямо в видеопамяти (это бесплатно по времени)
+        self.local_obs.append(obs_gpu)
+        self.local_next_obs.append(next_obs_gpu)
+        self.local_actions.append(action_gpu)
+        self.local_rewards.append(reward_gpu)
+        self.local_terminated.append(terminated_gpu)
+
+        # Если накопили 16 шагов, отправляем их одной транзакцией
+        if len(self.local_obs) >= self.local_buffer_size:
+            # Соединяем накопленные шаги в одну большую пачку на GPU
+            stacked_obs = jax.numpy.concatenate(self.local_obs, axis=0)
+            stacked_next_obs = jax.numpy.concatenate(self.local_next_obs, axis=0)
+            stacked_actions = jax.numpy.concatenate(self.local_actions, axis=0)
+            stacked_rewards = jax.numpy.concatenate(self.local_rewards, axis=0)
+            stacked_terminated = jax.numpy.concatenate(self.local_terminated, axis=0)
+
+            # Делаем ОДИН запрос копирования на CPU вместо 16 отдельных!
+            obs_cpu, next_obs_cpu, action_cpu, reward_cpu, terminated_cpu = jax.device_get((
+                stacked_obs, stacked_next_obs, stacked_actions, stacked_rewards, stacked_terminated
+            ))
+
+            # Отправляем готовую большую пачку в буфер
+            self.output_queue.put((
+                obs_cpu, 
+                next_obs_cpu,
+                action_cpu,
+                reward_cpu, 
+                terminated_cpu
+            ))
+
+            # Очищаем временные списки
+            self.local_obs.clear()
+            self.local_next_obs.clear()
+            self.local_actions.clear()
+            self.local_rewards.clear()
+            self.local_terminated.clear()
+        
+        return state, val_term, val_rew
+
+    def compute_metrics_cpu(self, reward_cpu, terminated_cpu):
+        self._episode_rewards += reward_cpu
+        
+        terminated_count = np.sum(terminated_cpu)
+        if terminated_count > 0:
+            episode_reward = np.sum(self._episode_rewards * terminated_cpu) / terminated_count
+            self.episode_reward.append(float(episode_reward))
+            
+            # Сброс наград для завершенных эпизодов
+            self._episode_rewards *= (1.0 - terminated_cpu)
+            
+    def write_params_to_file(self, filename, params):
+        with open(filename, 'wb') as f:
+            f.write(serialization.to_bytes(params))        
+
+    def save_state(self, path, agent_params, qf1_params, qf2_params, q_opt_state, p_opt_state, alpha_opt_state):
+        os.makedirs(path, exist_ok=True)
+        self.write_params_to_file(os.path.join(path, 'agent.flax'), agent_params)
+        self.write_params_to_file(os.path.join(path, 'q1.flax'), qf1_params)
+        self.write_params_to_file(os.path.join(path, 'q2.flax'), qf2_params)
+        self.write_params_to_file(os.path.join(path, 'q_opt.flax'), q_opt_state)
+        self.write_params_to_file(os.path.join(path, 'p_opt.flax'), p_opt_state)
+        self.write_params_to_file(os.path.join(path, 'a_opt.flax'), alpha_opt_state)     
+
+    def transfer_params_if_needed(self, params):
+            if self.device != self.config['trainer_device']:
+                return jax.device_put(params, self.device)
+            return params
+
+    def run(self):
+        use_norm = '(with obs norm)' if self.normalize_obs else ''
+        logger.info(f"Spider-Worker {use_norm} {self.name} alive on {self.device}!")
+        self.running = True
+
+        state = self.jit_reset(self.env_rng_key)
+        state['step'] = jax.random.randint(self.rng_key, state['step'].shape, 0, self.env.max_steps-2) 
+        
+        logger.info(f"Starting {self.random_steps_count} random steps to fill buffer...")
+        for i in range(self.random_steps_count):
+            state, _, _ = self.perform_step(state, self.jit_random_step)
+            if i % 100 == 0 and len(self.episode_reward) > 0:
+                # Оптимизировано: Среднее значение через быстрый numpy на CPU
+                episode_reward = np.mean(self.episode_reward)
+                logger.info(f'Warm-up {i:05d}\t средняя награда: {episode_reward:1.4f}')
+                
+        logger.info('Random steps finished. Starting training loop.')
+        
+        self.step = 0
+        
+        trainee_name, params, qf1, qf2, global_step, opt_params = self.agent_queue.get()
+        trainee_params = self.transfer_params_if_needed(params)
+        
+        validant_params = trainee_params
+        validant_qf1, validant_qf2 = qf1, qf2
+        validant_opt_params = opt_params 
+        
+        total_validation_reward = 0.0
+        total_episodes = 0
+        validation_step = 0
+        
+        while self.running: 
+            if self.step % 16 == 0:
+                trainee_name, trainee_params, qf1, qf2, global_step, opt_params = self.agent_queue.get()
+                trainee_params = self.transfer_params_if_needed(trainee_params)
+            
+            state, val_term, val_rew = self.perform_step(
+                state, 
+                self.jit_agent_step, 
+                (trainee_params, validant_params)
+            )
+            
+            # Оптимизировано: Переносим координаты и шаг ОДНИМ запросом вместо 4 блокировок
+            com_val, step_val = jax.device_get((
+                state['last_com'][self.plot_env_idx], 
+                state['step'][self.plot_env_idx]
+            ))
+            
+            best_agent_x = float(com_val[0])
+            best_agent_y = float(com_val[1])
+            best_agent_z = float(com_val[2])
+            is_reset = (int(step_val) == 0)
+            
+            self.best_agent_xs.append(best_agent_x)
+            self.best_agent_ys.append(best_agent_y)
+            self.best_agent_heights.append(best_agent_z)
+            
+            if is_reset and len(self.best_agent_heights) > 100:
+                role_name = "Ученик (Exploration)" if self.plot_env_idx < self.env_batch_size else "Тестировщик (Validation)"
+                logger.warning(f"Отрисован график для робота №{self.plot_env_idx} ({role_name})")
+                
+                self.plot_and_save_trajectory_graphs()
+                
+                self.best_agent_heights = []
+                self.best_agent_xs = []
+                self.best_agent_ys = []
+                
+                self.plot_env_idx = np.random.randint(0, self.total_batch_size)
+
+            if self.step % 5000 == 0:
+                mean = self.running_obs_mean_std.mean
+                var = self.running_obs_mean_std.var
+                count = self.running_obs_mean_std.count
+                
+                os.makedirs('obs-norm', exist_ok=True)
+                np.savez('obs-norm/obs_norm_last.npz', 
+                        obs_mean=jax.device_get(mean), 
+                        obs_var=jax.device_get(var),
+                        obs_count=float(count))
+            
+            self.step += 1 
+            
+            if self.step >= self.validation_start:
+                total_validation_reward += val_rew
+                total_episodes += val_term
+                validation_step += 1  
+            
+            if validation_step >= self.validation_steps and total_episodes > 0:
+                reward_per_episode = float(total_validation_reward / total_episodes)
+                self.validant_last_reward = reward_per_episode
+                
+                if self.validant_best_reward is None or reward_per_episode > self.validant_best_reward:
+                    self.validant_best_reward = reward_per_episode
+
+                    agent_path = os.path.join('checkpoints', f'{trainee_name}', f'best_at_{global_step}')             
+                    logger.info(f"!!! NEW RECORD: {reward_per_episode:1.2f}m. Saving best agent to '{agent_path}'")
+                    self.save_state(agent_path, trainee_params, qf1, qf2, *opt_params)
+
+                    np.savez(os.path.join(agent_path, 'obs_norm.npz'), 
+                            obs_mean=jax.device_get(self.running_obs_mean_std.mean), 
+                            obs_var=jax.device_get(self.running_obs_mean_std.var),
+                            obs_count=float(self.running_obs_mean_std.count))
+                    
+                    validant_params = trainee_params
+                    validant_opt_params = opt_params
+                    validant_qf1, validant_qf2 = qf1, qf2
+                
+                total_validation_reward = 0.0
+                total_episodes = 0
+                validation_step = 0
+                
+        logger.debug(f"Worker finished")
+
+    def normalize_obs_if_needed(self, obs):
+        if not self.normalize_obs:
+            return obs
+        return jax.numpy.clip((obs - self.obs_rms_mean) / jax.numpy.sqrt(self.obs_rms_var + 1e-8), -10.0, 10.0)
+
+    def plot_and_save_trajectory_graphs(self):
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  
+            import matplotlib.pyplot as plt
+            
+            fig, axs = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+            fig.suptitle(f'Траектория лучшего паука (Шаг обучения: {self.step})', fontsize=14, fontweight='bold')
+            
+            axs[0].plot(self.best_agent_heights, label='Высота корпуса (Z)', color='red', linewidth=2)
+            axs[0].axhline(y=0.15, color='green', linestyle='--', label='Идеальная высота (~0.15м)')
+            axs[0].axhline(y=0.08, color='black', linestyle=':', label='Порог смерти (0.08м)')
+            axs[0].set_ylabel('Высота Z (метры)')
+            axs[0].set_ylim(0.0, 0.4)
+            axs[0].grid(True, linestyle=':', alpha=0.6)
+            axs[0].legend(loc='upper right')
+            
+            axs[1].plot(self.best_agent_xs, label='Пройденное расстояние (X)', color='blue', linewidth=2)
+            axs[1].set_ylabel('Расстояние X (метры)')
+            axs[1].grid(True, linestyle=':', alpha=0.6)
+            axs[1].legend(loc='upper left')
+            
+            axs[2].plot(self.best_agent_ys, label='Отклонение вбок (Y)', color='purple', linewidth=2)
+            axs[2].axhline(y=0.0, color='black', linestyle='--', alpha=0.5, label='Центр коридора (Y=0)')
+            axs[2].set_ylabel('Смещение Y (метры)')
+            axs[2].set_xlabel('Шаги внутри эпизода')
+            axs[2].set_ylim(-1.0, 1.0)  
+            axs[2].grid(True, linestyle=':', alpha=0.6)
+            axs[2].legend(loc='upper left')
+            
+            plt.tight_layout()
+            
+            os.makedirs('plots', exist_ok=True)
+            plt.savefig('plots/height_trajectory_latest.png', dpi=150)
+            plt.close()
+            
+        except Exception as e:
+            logger.error(f"Ошибка при рисовании графиков траектории: {e}")
+
+=========================================
+FILE: buffer.py
+=========================================
+
+import threading
+from queue import Queue
+import time
+import numpy as np
+import jax  # Добавлено для оптимизации переноса данных на GPU
+
+class BufferThread(threading.Thread):
+    def __init__(self, buffer_size, env_batch_size, observation_space_shape, action_space_shape, name='Buffer Thread'):
+        super(BufferThread, self).__init__(name=name)
+        self.daemon = True
+        self.input_queue = Queue()
+        self.running = False
+        
+        # Блокировка для безопасного доступа к буферу из разных потоков
+        self.lock = threading.Lock()
+        
+        self.buffer = ReplayBuffer(buffer_size, env_batch_size, observation_space_shape,
+                                   action_space_shape)
+        self.output_count = 0
+        self.total_replay_samples = 0
+        
+        # Инициализация переменных SPS во избежание AttributeError при раннем чтении
+        self._input_sps = 0.0
+        self._output_sps = 0.0
+
+    @property
+    def input_sps(self):
+        return self._input_sps
+
+    @property
+    def output_sps(self):
+        return self._output_sps
+
+    def stop(self):
+        self.running = False
+
+    def run(self) -> None:
+        self.running = True
+        iteration = 0
+        input_count = 0
+        last_t = time.time()
+
+        while self.running:
+            obs, next_obs, action, reward, terminated = self.input_queue.get(block=True)
+            
+            # Запись в буфер защищена блокировкой
+            with self.lock:
+                self.buffer.add(obs, next_obs, action, reward, terminated)
+                
+            input_count += obs.shape[0]
+            self.total_replay_samples += obs.shape[0]
+            dt = time.time() - last_t
+            if dt >= 1.0:
+                self._input_sps = input_count / dt
+                self._output_sps = self.output_count / dt
+                input_count = 0
+                self.output_count = 0
+                last_t = time.time()
+
+            iteration += 1
+
+    def sample(self, batch_size):
+        self.output_count += batch_size
+        
+        # Чтение из буфера защищено блокировкой
+        with self.lock:
+            numpy_batch = self.buffer.sample(batch_size)
+            
+        # Асинхронный перенос батча на GPU/TPU устройство
+        return jax.device_put(numpy_batch)
+
+
+class ReplayBuffer:
+    def __init__(self, size, env_batch_size, observation_space_shape, action_space_shape):
+        self.size = int(np.ceil(size / env_batch_size)) * env_batch_size
+        self.env_batch_size = env_batch_size
+        self.obs_buffer = np.zeros((self.size, *observation_space_shape))
+        self.next_obs_buffer = np.zeros_like(self.obs_buffer)
+        self.action_buffer = np.zeros((self.size, *action_space_shape))
+        self.reward_buffer = np.zeros((self.size, 1))
+        self.terminated_buffer = np.zeros((self.size, 1))
+        self.ptr = 0
+        self.full = False
+        
+        # Генератор случайных чисел инициализируется один раз
+        self.rng = np.random.default_rng()
+
+    def add(self, obs, next_obs, action, reward, terminated):
+        n = obs.shape[0]  # Размер входящей пачки (теперь может быть равен 16 * env_batch_size)
+        
+        # Циклический буфер: проверяем, помещается ли пачка до конца массива
+        if self.ptr + n <= self.size:
+            self.obs_buffer[self.ptr:self.ptr + n] = obs
+            self.next_obs_buffer[self.ptr:self.ptr + n] = next_obs
+            self.action_buffer[self.ptr:self.ptr + n] = action
+            self.reward_buffer[self.ptr:self.ptr + n] = reward
+            self.terminated_buffer[self.ptr:self.ptr + n] = terminated
+            self.ptr += n
+        else:
+            # Если пачка не влезает, делим её на две части: 
+            # первую пишем до конца массива, вторую — в начало массива
+            space_left = self.size - self.ptr
+            
+            self.obs_buffer[self.ptr:] = obs[:space_left]
+            self.obs_buffer[:n - space_left] = obs[space_left:]
+            
+            self.next_obs_buffer[self.ptr:] = next_obs[:space_left]
+            self.next_obs_buffer[:n - space_left] = next_obs[space_left:]
+            
+            self.action_buffer[self.ptr:] = action[:space_left]
+            self.action_buffer[:n - space_left] = action[space_left:]
+            
+            self.reward_buffer[self.ptr:] = reward[:space_left]
+            self.reward_buffer[:n - space_left] = reward[space_left:]
+            
+            self.terminated_buffer[self.ptr:] = terminated[:space_left]
+            self.terminated_buffer[:n - space_left] = terminated[space_left:]
+            
+            self.ptr = n - space_left
+            self.full = True
+
+    def sample(self, batch_size):
+        p = self.ptr if not self.full else self.size
+        
+        # Оптимизированный выбор случайных индексов через integers вместо choice
+        idx = self.rng.integers(0, p, size=batch_size)
+        
+        return (
+            self.obs_buffer[idx], 
+            self.next_obs_buffer[idx], 
+            self.action_buffer[idx], 
+            self.reward_buffer[idx], 
+            self.terminated_buffer[idx]
+        )
+
+=========================================
+FILE: trainer.py
+=========================================
+
+import threading
+from queue import Queue, Full
+import logging 
+
+from buffer import BufferThread
+from q_network import SoftQNetwork_skip
+
+import jax
+from jax import jit, value_and_grad
+import optax
+import flax
+from flax import traverse_util
+from flax import serialization
+import os
+import numpy as np  # Импортируем NumPy для быстрой CPU-обработки логов
+
+from worker import WorkerThread
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+logging.basicConfig(
+    format='%(asctime)s [%(threadName)s] %(levelname)s: %(message)s',
+    level=logging.WARNING
+)
+
+class Reporter:
+    def __init__(self, 
+                 use_tensorboard: bool = False,
+                 use_wandb: bool = False,
+                 tensorboard_dir = "runs",
+                 wandb_project = "spider-rescue-mission",
+                 wandb_config = None):
+        
+        self.use_tensorboard = use_tensorboard
+        self.use_wandb = use_wandb
+        self.writer = None
+        self.run_name = 'unnamed'
+        self.wandb = None
+        
+        if use_wandb:
+            import wandb
+            self.wandb = wandb
+            self.wandb.init(project=wandb_project, config=wandb_config, sync_tensorboard=use_tensorboard)
+            self.run_name = self.wandb.run.name
+            
+        if use_tensorboard:
+            from torch.utils.tensorboard import SummaryWriter
+            self.writer = SummaryWriter(os.path.join(tensorboard_dir, self.run_name))
+
+    def log(self, data: dict, step: int):
+        # Log to TensorBoard
+        if self.use_tensorboard:
+            for key, value in data.items():
+                self.writer.add_scalar(key, value, step)
+                
+        # Log to WandB
+        if self.use_wandb and not self.use_tensorboard:
+                self.wandb.log(data, step=step)
+
+    def close(self):
+        if self.writer is not None:
+            self.writer.close()
+        if self.use_wandb:
+            self.wandb.finish()
+            
+
+def linear_warmup_cosine_decay_scheduler(
+    init_value, warmup_steps, decay_steps, end_value=None
+):
+    if end_value is None:
+        end_value = init_value * 0.1  
+    schedule = optax.join_schedules(
+        [
+            optax.linear_schedule(0.0, init_value, warmup_steps),
+            optax.cosine_decay_schedule(init_value, decay_steps, end_value),
+        ],
+        [warmup_steps],
+    )
+    return schedule
+
+
+class TrainingThread(threading.Thread):
+
+    def __init__(self, config, buffer_thread: BufferThread, agent_queue: Queue, agent, agent_params, rng_key, observation_space_shape, action_space_shape, worker_thread: WorkerThread, name='Training Thread'):
+        super(TrainingThread, self).__init__(name=name)
+        self.daemon = True
+        self.agent_queue = agent_queue
+        self.running = False
+        
+        self.device = config['trainer_device']
+        self.config = config
+        self.batch_size = config['trainer_batch_size']
+        self.agent = agent
+        self.agent_params = jax.device_put(agent_params, self.device) 
+        self.report_to_wandb = True
+        
+        self.buffer_thread = buffer_thread
+        self.synchroneous = True
+        
+        self.initial_alpha = config['initial_alpha']
+        self.tau = config['tau']
+        self.gamma = config['gamma']
+        self.q_lr = config['q_lr']
+        self.p_lr = config['p_lr']
+        self.policy_update_interval = 1
+        self.autotune = config['autotune_alpha']
+        self.total_steps=config['total_steps']
+        
+        self.warmup_steps = config['warmup_steps']
+        
+        self.qf1 = SoftQNetwork_skip()
+        self.qf2 = SoftQNetwork_skip()
+        
+        self.qf1_target = SoftQNetwork_skip()
+        self.qf2_target = SoftQNetwork_skip()
+        
+        init1, init2, self.rng_key = jax.device_put(jax.random.split(rng_key, 3), device=self.device)
+        
+        
+        actions_count = jax.numpy.prod(jax.numpy.array(action_space_shape)).item()
+        observations_count = jax.numpy.prod(jax.numpy.array(observation_space_shape)).item()
+        
+        dummy_obs = jax.numpy.ones((1, observations_count), device=self.device)
+        dummy_action = jax.numpy.ones((1, actions_count), device=self.device)
+        
+        self.qf1_params = jax.jit(self.qf1.init)(init1, dummy_obs, dummy_action)['params']
+        self.qf_target1_params = jax.jit(self.qf1.init)(init1, dummy_obs, dummy_action)['params']
+        
+        self.qf2_params = jax.jit(self.qf2.init)(init2, dummy_obs, dummy_action)['params']
+        self.qf_target2_params = jax.jit(self.qf2.init)(init2, dummy_obs, dummy_action)['params']
+        
+        total_q_params = sum(p.size for p in jax.tree_util.tree_leaves(self.qf1_params))
+        logger.info(f'Total number of parameters in the Q-network: {total_q_params}')
+        
+        total_agent_params = sum(p.size for p in jax.tree_util.tree_leaves(self.agent_params))
+        logger.info(f'Total number of parameters in the agent: {total_agent_params}')
+        
+        decay_steps = self.total_steps - self.warmup_steps  
+        self.p_lr_schedule = linear_warmup_cosine_decay_scheduler(self.p_lr, self.warmup_steps, decay_steps)
+        self.q_lr_schedule = linear_warmup_cosine_decay_scheduler(self.q_lr, self.warmup_steps, decay_steps)
+    
+        self.q_optimizer = optax.nadam(learning_rate=self.q_lr_schedule)
+        
+        combined_params = {'qf1': self.qf1_params, 'qf2': self.qf2_params}
+        self.q_opt_state = jax.jit(self.q_optimizer.init)(combined_params)
+        
+        self.p_optimizer = optax.nadam(learning_rate=self.p_lr_schedule)
+        self.p_opt_state = jax.jit(self.p_optimizer.init)(self.agent_params)
+        
+        self.worker_thread = worker_thread
+        
+        self.target_entropy = -18.0
+        self.log_alpha = jax.device_put(jax.numpy.log(self.initial_alpha), device=self.device)
+        self.alpha_optimizer = optax.nadam(learning_rate=self.p_lr_schedule)
+        self.alpha_opt_state = jax.jit(self.alpha_optimizer.init)(self.log_alpha)
+        self.alpha = jax.numpy.exp(self.log_alpha)
+        
+        self.current_step = 0
+            
+    def write_params_to_file(self, filename, params):
+        with open(filename, 'wb') as f:
+            f.write(serialization.to_bytes(params))
+        
+    def save_state(self, path):
+        os.makedirs(path, exist_ok=True)
+        self.write_params_to_file(os.path.join(path, 'agent.flax'), self.agent_params)
+        self.write_params_to_file(os.path.join(path, 'q1.flax'), self.qf1_params)
+        self.write_params_to_file(os.path.join(path, 'q2.flax'), self.qf2_params)
+        self.write_params_to_file(os.path.join(path, 'q_opt.flax'), self.q_opt_state)
+        self.write_params_to_file(os.path.join(path, 'p_opt.flax'), self.p_opt_state)
+        self.write_params_to_file(os.path.join(path, 'a_opt.flax'), self.alpha_opt_state)     
+        
+        # Сохраняем текущий глобальный шаг обучения
+        with open(os.path.join(path, 'step.txt'), 'w') as f:
+            f.write(str(self.current_step))
+            
+        # Сохраняем актуальную статистику нормализации прямо в папку чекпоинта
+        if self.worker_thread is not None:
+            # Безопасное чтение через геттер вместо прямого обращения к атрибутам воркера
+            mean, var, count = self.worker_thread.running_obs_mean_std.get_stats()
+            np.savez(
+                os.path.join(path, 'obs_norm_last.npz'), 
+                obs_mean=jax.device_get(mean), 
+                obs_var=jax.device_get(var),
+                obs_count=float(count)
+            )
+            
+    def load_state(self, path):
+        logger.info(f'Loading state from {path}')
+        with open(os.path.join(path,'agent.flax'), 'rb') as checkpoint:
+            params_bytes = checkpoint.read()
+            self.agent_params = serialization.from_bytes(self.agent_params, params_bytes)
+            
+        with open(os.path.join(path,'q1.flax'), 'rb') as checkpoint:
+            params_bytes = checkpoint.read()
+            self.qf1_params = serialization.from_bytes(self.qf1_params, params_bytes)
+            self.qf_target1_params = serialization.from_bytes(self.qf_target1_params, params_bytes)
+            
+        with open(os.path.join(path,'q2.flax'), 'rb') as checkpoint:
+            params_bytes = checkpoint.read()
+            self.qf2_params = serialization.from_bytes(self.qf2_params, params_bytes)
+            self.qf_target2_params = serialization.from_bytes(self.qf_target2_params, params_bytes)
+            
+        with open(os.path.join(path,'q_opt.flax'), 'rb') as checkpoint:
+            params_bytes = checkpoint.read()
+            self.q_opt_state = serialization.from_bytes(self.q_opt_state, params_bytes)
+
+        with open(os.path.join(path,'p_opt.flax'), 'rb') as checkpoint:
+            params_bytes = checkpoint.read()
+            self.p_opt_state = serialization.from_bytes(self.p_opt_state, params_bytes)
+            
+        with open(os.path.join(path,'a_opt.flax'), 'rb') as checkpoint:
+            params_bytes = checkpoint.read()
+            self.alpha_opt_state = serialization.from_bytes(self.alpha_opt_state, params_bytes)
+
+        # Загружаем шаг обучения
+        step_file = os.path.join(path, 'step.txt')
+        if os.path.exists(step_file):
+            with open(step_file, 'r') as f:
+                self.current_step = int(f.read().strip())
+        else:
+            self.current_step = 0
+
+        
+    def policy_grad(self, observations, agent_params, qf1_params, qf2_params, rng_key, alpha, mean, var):
+        
+        def policy_loss(agent_params, qf1_params, qf2_params, observations):
+            # Нормализация батча «на лету» перед подачей в сеть
+            norm_obs = jax.numpy.clip((observations - mean) / jax.numpy.sqrt(var + 1e-8), -10.0, 10.0)
+            pi, log_pi, _ = self.agent.get_action(agent_params, norm_obs, rng_key)
+            
+            qf1_pi = self.qf1.apply({'params': qf1_params}, norm_obs, pi)
+            qf2_pi = self.qf2.apply({'params': qf2_params}, norm_obs, pi)
+            combined_qf_pi = jax.numpy.minimum(qf1_pi, qf2_pi)   
+            loss = jax.numpy.mean((alpha * log_pi) - combined_qf_pi)
+            return loss, log_pi
+
+        (p_loss, log_pi), p_grad = value_and_grad(policy_loss, argnums=0, has_aux=True)(agent_params, qf1_params, qf2_params, observations)
+        return p_loss, log_pi, p_grad
+    
+    def alpha_step(self, log_alpha, log_pi):
+        def alpha_loss_fn(log_alpha, log_pi):
+            alpha = jax.numpy.exp(log_alpha)
+            alpha_loss = -jax.numpy.mean(alpha * (log_pi + self.target_entropy))
+            return alpha_loss
+        alpha_loss, alpha_grad = jax.value_and_grad(alpha_loss_fn)(log_alpha, log_pi)
+        return alpha_loss, alpha_grad
+    
+    def q_grad(self, observations, next_observations, actions, rewards, dones,
+               qf1_params, qf2_params, qf1_target_params, qf2_target_params, agent_params, 
+               rng_key, alpha, mean, var):
+        
+        # Нормализация батчей «на лету»
+        norm_obs = jax.numpy.clip((observations - mean) / jax.numpy.sqrt(var + 1e-8), -10.0, 10.0)
+        norm_next_obs = jax.numpy.clip((next_observations - mean) / jax.numpy.sqrt(var + 1e-8), -10.0, 10.0)
+
+        next_state_actions, next_state_log_pi, _ = self.agent.get_action(agent_params, norm_next_obs, rng_key)
+        qf1_next_target = self.qf1_target.apply({'params': qf1_target_params}, norm_next_obs, next_state_actions)
+        qf2_next_target = self.qf2_target.apply({'params': qf2_target_params}, norm_next_obs, next_state_actions)
+        combined_qf_next_target = jax.numpy.minimum(qf1_next_target, qf2_next_target)
+        combined_qf_next_target = combined_qf_next_target - alpha * next_state_log_pi
+        d = (1 - dones)
+        next_q_value = rewards + d * self.gamma * combined_qf_next_target
+        
+        def qf_loss(_qf1_params, _qf2_params):
+            qf1_a_values = self.qf1.apply({'params': _qf1_params}, norm_obs, actions)
+            qf2_a_values = self.qf2.apply({'params': _qf2_params}, norm_obs, actions) 
+            
+            qf1_loss = jax.numpy.square(qf1_a_values-next_q_value).mean() 
+            qf2_loss = jax.numpy.square(qf2_a_values-next_q_value).mean() 
+            return jax.numpy.mean(qf1_loss + qf2_loss)
+        q_loss, grads = value_and_grad(qf_loss, argnums=(0, 1))(qf1_params, qf2_params)
+        return q_loss, *grads
+    
+    # Оптимизировано: Быстрый target_update на основе PyTree механизмов JAX
+    def target_update(self, target_params, source_params, tau):
+        return jax.tree_util.tree_map(
+            lambda t, s: tau * s + (1.0 - tau) * t,
+            target_params, source_params
+        )
+    
+    def q_step(self,
+               q_opt_state,
+               observations, next_observations, actions, rewards, dones,
+               qf1_params, qf2_params, qf1_target_params, qf2_target_params, agent_params, rng_key, alpha, mean, var):
+        q_loss, qf1_grad, qf2_grad = self.q_grad(observations, 
+                                                    next_observations,
+                                                    actions,
+                                                    rewards, 
+                                                    dones,
+                                                    qf1_params,
+                                                    qf2_params,
+                                                    qf1_target_params,
+                                                    qf2_target_params,
+                                                    agent_params,
+                                                    rng_key,
+                                                    alpha,
+                                                    mean,
+                                                    var)
+            
+        combined_gradients = {'qf1': qf1_grad, 'qf2': qf2_grad}
+        combined_params = {'qf1': qf1_params, 'qf2': qf2_params}
+        
+        updates, q_opt_state = self.q_optimizer.update(combined_gradients, q_opt_state, combined_params)
+        updated_params = optax.apply_updates(combined_params, updates)
+        return q_loss, updated_params['qf1'], updated_params['qf2'], q_opt_state
+    
+    def policy_step(self, 
+                    p_opt_state, alpha_opt_state,
+                    observations, 
+                    agent_params,
+                    new_qf1_params, new_qf2_params,
+                    rng_key, alpha, log_alpha, mean, var):
+        for _ in range(self.policy_update_interval):
+            key0, key1, rng_key = jax.random.split(rng_key, 3)
+            p_loss, log_pi, p_grad = self.policy_grad(observations, agent_params, new_qf1_params, new_qf2_params, key0, alpha, mean, var)
+            
+            p_updates, p_opt_state = self.p_optimizer.update(p_grad, p_opt_state, agent_params)
+            agent_params = optax.apply_updates(agent_params, p_updates)
+            
+            if self.autotune:
+                norm_obs = jax.numpy.clip((observations - mean) / jax.numpy.sqrt(var + 1e-8), -10.0, 10.0)
+                _, log_pi, _ = self.agent.get_action(agent_params, norm_obs, key1)
+                alpha_loss, alpha_grad = self.alpha_step(log_alpha, log_pi)
+                updates, alpha_opt_state = self.alpha_optimizer.update(alpha_grad, alpha_opt_state)
+                log_alpha = optax.apply_updates(log_alpha, updates)
+                alpha = jax.numpy.exp(log_alpha)
+        return p_loss, alpha_loss, agent_params, alpha, log_alpha, p_opt_state, alpha_opt_state
+    
+    def target_step(self, qf1_target_params, qf2_target_params, new_qf1_params, new_qf2_params):
+        new_qf1_target1_params = self.target_update(qf1_target_params, new_qf1_params, self.tau)
+        new_qf2_target1_params = self.target_update(qf2_target_params, new_qf2_params, self.tau)
+        return new_qf1_target1_params, new_qf2_target1_params
+    
+    def run(self):
+        logger.info(f"Spider-Rescue-SAC {self.name} alive on {self.device}!")
+        self.running = True
+        
+        jit_q_step = jit(self.q_step, device=self.device)
+        jit_policy_step = jit(self.policy_step, device=self.device)
+        jit_target_step = jit(self.target_step, device=self.device)
+        
+        step = self.current_step
+        q_loss = 0.0
+        p_loss = 0.0
+        a_loss = 0.0
+        
+        config = dict(batch_size=self.batch_size, 
+                      policy_update_interval=self.policy_update_interval,
+                      initial_alpha=self.initial_alpha,
+                      tau=self.tau,
+                      gamma=self.gamma,
+                      q_lr=self.q_lr,
+                      p_lr=self.p_lr,
+                      total_steps=self.total_steps,
+                      warmup_steps = self.warmup_steps
+                      ) 
+        config.update(self.config)
+        
+        reporter = Reporter(
+            use_tensorboard=config['report_to_tensorboard'],  
+            use_wandb=config['report_to_wandb'],       
+            tensorboard_dir="runs/",
+            wandb_project='spider-rescue-mission', 
+            wandb_config=config,
+        )
+        
+        os.makedirs(os.path.join('checkpoints', reporter.run_name), exist_ok=True)
+        
+        logger.debug("Waiting for worker to start consuming queued agents")
+        
+        for _ in range(self.agent_queue.maxsize+2):  
+            self.agent_queue.put((reporter.run_name, self.agent_params, self.qf1_params, self.qf2_params, step, (self.q_opt_state, self.p_opt_state, self.alpha_opt_state)), block=self.synchroneous)
+        
+        logger.debug("Starting trainer loop")
+        
+        # --- ГЛАВНЫЙ ЦИКЛ ОБУЧЕНИЯ ---
+        while self.running:
+            batch = self.buffer_thread.sample(self.batch_size)
+            observations, next_observations, actions, rewards, dones = [jax.device_put(data, self.device) for data in batch]
+            
+            mean_reward = rewards.mean()
+            inference_key0, inference_key1, self.rng_key = jax.random.split(self.rng_key, 3)
+            
+            # Чтение актуальной статистики нормализации из воркера и перенос на устройство тренера
+            mean_raw, var_raw, _ = self.worker_thread.running_obs_mean_std.get_stats()
+            current_mean = jax.device_put(mean_raw, self.device)
+            current_var = jax.device_put(var_raw, self.device)
+            
+            # ШАГ КРИТИКА
+            q_loss, self.qf1_params, self.qf2_params, self.q_opt_state = jit_q_step(
+                self.q_opt_state, observations, next_observations, actions, rewards, dones, 
+                self.qf1_params, self.qf2_params, self.qf_target1_params, self.qf_target2_params, 
+                self.agent_params, inference_key0, self.alpha, current_mean, current_var
+            )
+            
+            # ШАГ АКТЕРА
+            if self.policy_update_interval > 0 and step % self.policy_update_interval == 0:
+                p_loss, a_loss, self.agent_params, self.alpha, self.log_alpha, self.p_opt_state, self.alpha_opt_state = jit_policy_step(
+                    self.p_opt_state, self.alpha_opt_state, observations, self.agent_params, 
+                    self.qf1_params, self.qf2_params, inference_key1, self.alpha, self.log_alpha,
+                    current_mean, current_var
+                )
+            
+            # ОБНОВЛЕНИЕ ЦЕЛЕВЫХ СЕТЕЙ
+            self.qf_target1_params, self.qf_target2_params = jit_target_step(
+                self.qf_target1_params, self.qf_target2_params, self.qf1_params, self.qf2_params
+            )
+            
+            # Логирование
+            if step % 25 == 0 or step >= self.total_steps:
+                episode_reward = float(np.mean(self.worker_thread.episode_reward)) if self.worker_thread.episode_reward else 0.0
+                current_p_lr = self.p_lr_schedule(step)
+                current_q_lr = self.q_lr_schedule(step)
+                
+                data = {
+                    'q-loss': float(q_loss), 
+                    'p-loss': float(p_loss), 
+                    'a-loss': float(a_loss),
+                    'alpha': float(self.alpha),
+                    'reward-buffer-mean': float(mean_reward), 
+                    'reward-episode': float(episode_reward), 
+                    'p_lr': float(current_p_lr),
+                    'q_lr': float(current_q_lr),
+                    'env-steps': self.worker_thread.step
+                }
+                
+                validator_str = ''
+                if self.worker_thread.validant_last_reward is not None:
+                    data['dist-last-m'] = float(self.worker_thread.validant_last_reward)
+                    data['dist-best-m'] = float(self.worker_thread.validant_best_reward)
+                    validator_str = f', \tПоследняя дист.: {self.worker_thread.validant_last_reward:1.2f}м,\tЛучшая дист.: {self.worker_thread.validant_best_reward:1.2f}м'
+                
+                print(f'Step: {step:05d} | Env Step: {self.worker_thread.step} | '
+                        f'Q-Loss: {q_loss:8.4f} | Alpha: {self.alpha:6.4f} | '
+                        f'Дистанция: {episode_reward:8.4f}м'
+                        f'{validator_str}')
+
+                reporter.log(data, step=step)
+            
+            if step % 16 == 0:
+                try:
+                    self.agent_queue.put((reporter.run_name, self.agent_params, self.qf1_params, self.qf2_params, step, (self.q_opt_state, self.p_opt_state, self.alpha_opt_state)), block=self.synchroneous)
+                except Full:
+                    pass
+            
+            if step % 250 == 0 or step >= self.total_steps:
+                self.save_state(os.path.join('checkpoints', reporter.run_name, 'last'))
+            
+            self.current_step = step
+            if step >= self.total_steps:
+                break
+            step += 1
+            
+        logger.info(f"Spider-Rescue-SAC {self.name} finished!")
+ 
+    
+def main():
+    agent_queue = Queue()
+    from arena import BattleArena 
+    env = BattleArena()
+    
+    from agent import ActorSimple_skip
+    agent = ActorSimple_skip(env.action_space_shape[0], env.ctrlrange_high, env.ctrlrange_low, 512, 512)
+    
+    bt = BufferThread(1e4, 32, env.observation_space_shape, env.action_space_shape)
+    config = {'trainer_device': jax.devices()[0], 'trainer_batch_size': 32, 
+              'initial_alpha': 1.0, 'tau': 0.005, 'gamma': 0.99, 'q_lr': 0.001, 'p_lr': 0.001,
+              'autotune_alpha': True, 'total_steps': 1000, 'warmup_steps': 100,
+              'report_to_tensorboard': False, 'report_to_wandb': False}
+    
+    tt = TrainingThread(config=config, buffer_thread=bt, agent_queue=agent_queue, agent=agent, 
+                        agent_params=None, 
+                        rng_key=jax.random.key(0), 
+                        observation_space_shape=env.observation_space_shape, 
+                        action_space_shape=env.action_space_shape, 
+                        worker_thread=None)
+    print("Trainer Test mode ready.")
+
+if __name__ == "__main__":
+    main()
+
+=========================================
+FILE: generate_terrain.py
+=========================================
+
+import numpy as np
+from PIL import Image, ImageFilter
+import os
+
+def generate_rubble_terrain():
+    # Изменяем разрешение генерации на 300x100 (10 пикселей на 1 метр)
+    width, height = 300, 100
+    terrain = np.zeros((height, width), dtype=np.float32)
+    
+    segment_width = 100  # Ширина одной зоны (100 пикселей = 10 метров)
+    
+    h_gravel = 0.015 / 0.2  # Мелкая галька: 1.5 см
+    h_medium = 0.050 / 0.2  # Средние кочки: 5 см
+    h_high   = 0.100 / 0.2  # Крупные блоки: 10 см
+
+    # ----------------------------------------------------
+    # ШАГ 1: Мелкая галька на всю карту + сглаживание
+    # ----------------------------------------------------
+    gravel_noise = np.random.uniform(0.0, h_gravel, (height, width))
+    
+    # Превращаем в мягкую текстуру земли (уменьшаем радиус размытия соразмерно разрешению)
+    base_img = Image.fromarray((gravel_noise * 255).astype(np.uint8))
+    base_img_smoothed = base_img.filter(ImageFilter.GaussianBlur(radius=0.7))
+    
+    terrain += np.array(base_img_smoothed, dtype=np.float32) / 255.0
+
+    # ----------------------------------------------------
+    # ШАГ 2: Средние кочки (Зоны 2 и 3)
+    # ----------------------------------------------------
+    zone2_3_width = 200
+    medium_stones = np.zeros((height, zone2_3_width), dtype=np.float32)
+    
+    for _ in range(120):
+        # Масштабируем координаты под новое разрешение
+        rx = np.random.randint(5, zone2_3_width - 5)
+        ry = np.random.randint(5, height - 5)
+        size = np.random.randint(3, 8)
+        h = np.random.uniform(h_gravel, h_medium)
+        
+        y, x = np.ogrid[-ry:height-ry, -rx:zone2_3_width-rx]
+        dist = np.sqrt(x*x + y*y)
+        mask = dist <= size
+        
+        falloff = (1.0 + np.cos(np.pi * dist[mask] / size)) * 0.5
+        medium_stones[mask] = np.maximum(medium_stones[mask], h * falloff)
+        
+    terrain[:, segment_width:] = np.maximum(terrain[:, segment_width:], medium_stones)
+
+    # ----------------------------------------------------
+    # ШАГ 3: Крупные препятствия (только Зона 3)
+    # ----------------------------------------------------
+    zone3_width = 100
+    heavy_rubble = np.zeros((height, zone3_width), dtype=np.float32)
+    
+    for _ in range(35):
+        rx = np.random.randint(7, zone3_width - 7)
+        ry = np.random.randint(7, height - 7)
+        size_x = np.random.randint(5, 12)
+        size_y = np.random.randint(5, 12)
+        h = np.random.uniform(h_medium, h_high)
+        
+        heavy_rubble[ry-size_y//2 : ry+size_y//2, rx-size_x//2 : rx+size_x//2] = np.maximum(
+            heavy_rubble[ry-size_y//2 : ry+size_y//2, rx-size_x//2 : rx+size_x//2], h
+        )
+        
+    terrain[:, 2*segment_width:] = np.maximum(terrain[:, 2*segment_width:], heavy_rubble)
+
+    # ----------------------------------------------------
+    # ШАГ 4: Финальное сглаживание крупных объектов
+    # ----------------------------------------------------
+    terrain = np.clip(terrain, 0.0, h_high)
+    
+    final_raw_img = Image.fromarray((terrain * 255).astype(np.uint8))
+    final_smoothed_img = final_raw_img.filter(ImageFilter.GaussianBlur(radius=0.5))
+    
+    terrain_array = np.array(final_raw_img)
+    smoothed_array = np.array(final_smoothed_img)
+    
+    terrain_array[:, segment_width:] = smoothed_array[:, segment_width:]
+    
+    final_img = Image.fromarray(terrain_array)
+    
+    # Сохраняем в models/terrain.png
+    os.makedirs('models', exist_ok=True)
+    final_img.save("models/terrain.png")
+    print("Карта высот 300x100 успешно сохранена.")
+
+if __name__ == "__main__":
+    generate_rubble_terrain()
+
+=========================================
+FILE: arena.py
+=========================================
+
+import argparse 
+from collections import deque 
+import time 
+import jax 
+from jax import vmap 
+import mujoco 
+from mujoco import mjx 
+from mujoco.mjx import Data
+
+import sys 
+from jax import numpy as jp 
+import threading 
+from queue import Queue
+
+class BattleArena: 
+    def __init__(self) -> None:
+
+        self.model = mujoco.MjModel.from_xml_path("models/arena.xml")
+        self.model.opt.solver = mujoco.mjtSolver.mjSOL_NEWTON
+        self.model.opt.integrator = mujoco.mjtIntegrator.mjINT_EULER
+        self.model.opt.disableflags = mujoco.mjtDisableBit.mjDSBL_EULERDAMP
+        self.model.opt.iterations = 4 
+        self.model.opt.ls_iterations = 4
+            
+        self.q_function = None
+        self.q_params = None
+
+        self.data = mujoco.MjData(self.model)
+        self.mjx_model = mjx.put_model(self.model)
+            
+        self.frame_skip = 5
+            
+        # --- ПАРАМЕТРЫ РОБОТА И ЦЕЛИ ИЗ PYBULLET ---
+        self.agent_count = 1  
+        obs_size = (self.mjx_model.nq - 2) + self.mjx_model.nv + self.mjx_model.nv
+        self.observation_space_shape = (obs_size,) 
+        self.action_space_shape = (self.mjx_model.nu,)
+
+        self.ctrlrange_high = 1.0
+        self.ctrlrange_low = -1.0
+        self.max_steps = 1000
+
+        # Целевая позиция из PyBullet окружения
+        self.target_position = jp.array([5.0, 0.0, 0.10])
+        # Начальное расстояние до цели (для нормирования ухода в сторону)
+        self.initial_dist = jp.sqrt(self.target_position[0]**2 + self.target_position[1]**2)
+
+        # Вычисляем масштаб действий под радианы
+        self.action_scale = jp.array([jp.deg2rad(45.0), jp.deg2rad(45.0), jp.deg2rad(70.0)] * 6)
+
+        self.elbow_site_names = ["elbow_one", "elbow_two", "elbow_three", "elbow_four", "elbow_five", "elbow_six"]
+        self.elbow_site_ids = jp.array([
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, name)
+            for name in self.elbow_site_names
+        ])
+    
+    def reset(self, rng: jax.Array):
+        data = mjx.make_data(self.mjx_model)
+        rng_pos, rng_vel, rng_next = jax.random.split(rng, 3)
+
+        qpos = data.qpos
+        # Ставим робота в начальную точку на высоту 0.2 (как INIT_POSITION в PyBullet)
+        qpos = qpos.at[0:3].set(jp.array([0.0, 0.0, 0.15]))
+            
+        # Инициализация моторов в диапазоне от -10 до +10 градусов (pi / 18)
+        num_joints = self.mjx_model.nu
+        joint_noise = jax.random.uniform(rng_pos, (num_joints,), minval=-jp.pi/18.0, maxval=jp.pi/18.0)
+        qpos = qpos.at[7:7+num_joints].set(joint_noise)
+
+        # Скорости
+        low, hi = -0.01, 0.01
+        qvel = jax.random.uniform(rng_vel, (self.mjx_model.nv,), minval=low, maxval=hi)
+            
+        data = data.replace(qpos=qpos, qvel=qvel)
+        data = mjx.forward(self.mjx_model, data)
+            
+        obs = self.get_obs(data)
+        com_pos = data.subtree_com[1]
+            
+        return dict(
+            data=data,
+            step=0,
+            obs=obs,
+            rng=rng_next, 
+            last_com=com_pos, 
+        )
+    
+    def get_obs(self, data: Data):
+        obs = jp.concatenate((
+            data.qpos[2:],             
+            data.qvel,           
+            data.qfrc_actuator   
+        ))
+        return obs
+
+    def compute_reward(self, old_data, new_data):
+        dt = self.model.opt.timestep * self.frame_skip
+        curr_com = new_data.subtree_com[1] # Текущая позиция корпуса [x, y, z]
+
+        # Веса из PyBullet
+        w1 = 12.0  # Вес за приближение к цели
+        w2 = 0.4   # Вес за удержание высоты цели
+        w3 = 0.0   # Вес за энергозатраты
+        w4 = 0.4   # Вес за раскачивание корпуса (Roll/Pitch)
+        w5 = 15.0   # Вес штрафа за уход вбок по Y (НОВЫЙ)
+        w6 = 150.0 # Вес штрафа за касание локтями земли (настраивайте вручную)
+        w7 = 5.0  # Вес мгновенного (барьерного) штрафа за факт касания (НОВЫЙ)
+        w8 = 5.0 # Вес штрафа за поворот (можно настроить)
+            
+
+        old_com = old_data.subtree_com[1]
+        velocity_x = (curr_com[0] - old_com[0]) / dt
+        target_reward = w1 * velocity_x
+
+        # Штраф за движение по Y
+        y_position = curr_com[1] # Текущее положение робота на оси Y
+        sideways_penalty = w5 * (y_position ** 2) 
+
+
+        # 2. ШТРАФ ЗА ВЫСОТУ
+        height_penalty = w2 * jp.abs(curr_com[2] - self.target_position[2])
+
+        # 3. ПОТРЕБЛЕНИЕ ЭНЕРГИИ (активные суставы находятся начиная с индекса 6 в qvel/qfrc)
+        speeds = new_data.qvel[6:]
+        torques = new_data.qfrc_actuator[6:]
+        consumption = dt * jp.abs(jp.sum(speeds * torques))
+        power_penalty = w3 * consumption
+
+        # 4. РАСКАЧИВАНИЕ КОРПУСА (Конвертируем кватернион MJX в углы Roll/Pitch)
+        qw, qx, qy, qz = new_data.qpos[3], new_data.qpos[4], new_data.qpos[5], new_data.qpos[6]
+            
+        # Roll (угол крена)
+        sinr_cosp = 2.0 * (qw * qx + qy * qz)
+        cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+        roll = jp.arctan2(sinr_cosp, cosr_cosp)
+            
+        # Pitch (угол тангажа)
+        sinp = 2.0 * (qw * qy - qz * qx)
+        sinp = jp.clip(sinp, -0.999999, 0.999999) # избегаем NaN в arcsin
+        pitch = jp.arcsin(sinp)
+            
+        shaking_penalty = w4 * (jp.abs(roll) + jp.abs(pitch))
+            
+        # Барьерный штраф (НОВЫЙ): если хотя бы один локоть ниже порога, штрафуем сразу на w7
+        # 5. ШТРАФ ЗА КАСАНИЕ ЛОКТЯМИ ЗЕМЛИ (СТУПЕНЧАТЫЙ)
+        elbow_heights = new_data.site_xpos[self.elbow_site_ids, 2]
+        elbow_threshold = 0.028  # Порог высоты локтя (2.5 см)
+            
+        # Получаем булев массив (True там, где локоть ниже порога, False - где выше)
+        is_touching = (elbow_heights < elbow_threshold)
+            
+        # Суммируем количество коснувшихся ног (True превращается в 1, False в 0)
+        num_touching_legs = jp.sum(is_touching)
+            
+        # w7 — фиксированный штраф за ОДНУ коснувшуюся ногу. 
+        elbow_penalty = w7 * num_touching_legs
+
+        qw, qx, qy, qz = new_data.qpos[3], new_data.qpos[4], new_data.qpos[5], new_data.qpos[6]
+            
+        # Преобразование кватерниона в углы Эйлера (XYZ, как в MuJoCo)
+        # yaw (рысканье)
+        siny_cosp = 2.0 * (qw * qz + qx * qy)
+        cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+        yaw = jp.arctan2(siny_cosp, cosy_cosp)
+            
+        yaw_penalty = w8 * jp.abs(yaw)
+
+        # Итоговая награда
+        reward = target_reward - height_penalty - power_penalty - shaking_penalty - sideways_penalty - elbow_penalty - yaw_penalty
+        #reward *= 0.01
+
+        return reward
+
+
+    def validation_reward(self, old_com, new_com):
+        # Метрика прогресса к цели (на сколько метров продвинулся к точке)
+        old_dist = jp.sqrt((self.target_position[0] - old_com[0])**2 + (old_com[1] - self.target_position[1])**2)
+        new_dist = jp.sqrt((self.target_position[0] - new_com[0])**2 + (new_com[1] - self.target_position[1])**2)
+            
+        return old_dist - new_dist
+
+
+    def step(self, state0, control):
+        scaled_control = control * self.action_scale
+
+        # Интегрирование физики
+        data, _ = jax.lax.scan(
+            lambda d0, _: (mjx.step(self.mjx_model, d0.replace(ctrl=scaled_control)), None), 
+            state0['data'], (), self.frame_skip
+        )
+
+        new_step = state0['step'] + 1
+        steps_limit_reached = (new_step >= self.max_steps)
+        spider_com = data.subtree_com[1]
+
+        # Расчет награды
+        reward = self.compute_reward(state0['data'], data)
+
+        # Условия окончания из PyBullet (roll/pitch вне диапазона +- 30 градусов)
+        qw, qx, qy, qz = data.qpos[3], data.qpos[4], data.qpos[5], data.qpos[6]
+            
+        # Вычисление Roll/Pitch
+        sinr_cosp = 2.0 * (qw * qx + qy * qz)
+        cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+        roll = jp.arctan2(sinr_cosp, cosr_cosp)
+            
+        sinp = 2.0 * (qw * qy - qz * qx)
+        sinp = jp.clip(sinp, -0.999999, 0.999999)
+        pitch = jp.arcsin(sinp)
+            
+        # Булевы условия конца эпизода
+        limit_angle = jp.deg2rad(45.0) 
+        pitch_exceeded = (pitch > limit_angle) | (pitch < -limit_angle)
+        roll_exceeded = (roll > limit_angle) | (roll < -limit_angle)
+
+        fell_or_collapsed = (spider_com[2] < 0.03)
+            
+            
+        # Слишком далеко от цели (расстояние выросло более чем в 2 раза от изначального)
+        curr_dist = jp.sqrt((self.target_position[0] - spider_com[0])**2 + (spider_com[1] - self.target_position[1])**2)
+        too_far = (curr_dist > 2.0 * self.initial_dist)
+
+        done = jp.where(steps_limit_reached | fell_or_collapsed | pitch_exceeded | roll_exceeded | too_far, 1.0, 0.0)
+
+        # Метрика прогресса для валидации
+        val_reward = self.validation_reward(state0['last_com'], spider_com)
+
+        observations = self.get_obs(data)
+        new_state = dict(
+            data=data, 
+            step=new_step, 
+            obs=observations, 
+            rng=state0['rng'], 
+            last_com=spider_com
+        ) 
+
+        next_state = jax.lax.cond(done > 0.5, self.reset, lambda _ : new_state, new_state['rng'])
+
+        return (
+            next_state, 
+            observations, 
+            jp.array([reward]).reshape(-1), 
+            jp.array([done]).reshape(-1), 
+            val_reward
+        )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Spider Rescue Mission Simulation')
+    
+    parser.add_argument('--agent', type=str, default=None,
+                        help='Path to agent .flax file (default: agent.flax in root)')
+    
+    parser.add_argument('--norm', type=str, default='obs-norm/obs_norm_last.npz',
+                        help='Path to normalization values (.npz)')
+    
+    parser.add_argument('--save-mode', type=str, choices=['none', 'images', 'positions', 'both'],
+                        default='none', help='What data to save')
+    
+    args = parser.parse_args()
+    
+    if args.agent is None:
+        if os.path.exists('agent.flax'):
+            args.agent = 'agent.flax'
+        else:
+            print("Warning: No agent file found, will use random actions or wait for input.")
+    
+    return args
+
+
+def get_agent_display_name(agent_path):
+    dirname = os.path.dirname(agent_path)
+    if dirname == '':
+        return f"./{os.path.basename(agent_path)}"
+    return dirname
+
+
+def finish(image_queue, image_saver_thread):
+    if image_queue is not None:
+        image_queue.put((None, None, None, None))
+        print("Waiting frames to be saved as images...")
+        image_saver_thread.join()
+    sys.exit(0)
+
+
+def save_images(queue):
+    while True:
+        frame, pixels, xpos, xmat = queue.get()
+        if frame is None:
+            break
+        if xpos is not None and xmat is not None:
+            np.savez(f"outputs/pos-data/{frame:05d}.npz", geom_xpos=xpos, geom_xmat=xmat)
+        if pixels is not None:
+            plt.imsave(f"outputs/images/{frame:05d}.png", pixels)
+        
+        
+@jax.jit            
+def normalize_obs(obs, obs_rms_mean, obs_rms_var):
+    return jax.numpy.clip((obs - obs_rms_mean) / jax.numpy.sqrt(obs_rms_var + 1e-8), -10.0, 10.0)
+            
+            
+def main():
+    args = parse_args()
+
+    print("Starting Spider Rescue Mission with parameters:")
+    print(f"Agent: {args.agent}")
+    print(f"Normalization: {args.norm}")
+    print(f"Save mode: {args.save_mode}")
+
+    ba = BattleArena()
+
+    batch_size = 64
+    key = jax.random.split(jax.random.key(42), batch_size)
+    batched_state = vmap(ba.reset)(key)
+    obs_shape = batched_state['obs'].shape[-1] 
+    print('Batch observation shape:', batched_state['obs'].shape) 
+
+    agent = ActorSimple_skip(
+        ba.action_space_shape[0], 
+        ba.ctrlrange_high, ba.ctrlrange_low,
+        512, 512
+    ) 
+
+    from flax import serialization
+    init_key = jax.random.key(0)
+    dummy_obs = batched_state['obs'][0:1] 
+
+    if args.agent and os.path.exists(args.agent):
+        with open(args.agent, 'rb') as f:
+            agent_bytes = f.read()
+        agent_params = serialization.from_bytes(
+            agent.init(init_key, dummy_obs)['params'], 
+            agent_bytes
+        )
+        agent_params = jax.device_put(agent_params)
+        print("Agent loaded from file.")
+    else:
+        agent_params = agent.init(init_key, dummy_obs)['params']
+        print("Using RANDOM weights.")
+
+    obs_shape = batched_state['obs'].shape[-1]
+
+    obs_rms_mean = jp.zeros(obs_shape)
+    obs_rms_var = jp.ones(obs_shape)
+    if os.path.exists(args.norm):
+        obs_norm_values = np.load(args.norm)
+        if len(obs_norm_values['obs_mean']) == obs_shape:
+            obs_rms_mean = jax.numpy.array(obs_norm_values['obs_mean'])
+            obs_rms_var = jax.numpy.array(obs_norm_values['obs_var'])
+            print("-> Normalization loaded.")
+        else:
+            print(f"-> Norm shape mismatch! Expected {obs_shape}. Using default.")
+    else:
+        print("-> Using default normalization.")
+
+    image_queue = None
+    image_saver_thread = None
+    if args.save_mode != 'none':
+        os.makedirs('outputs', exist_ok=True)
+        os.makedirs(os.path.join('outputs', 'images'), exist_ok=True)
+        os.makedirs(os.path.join('outputs', 'pos-data'), exist_ok=True)
+        image_queue = Queue()
+        image_saver_thread = threading.Thread(target=save_images, args=(image_queue,))
+        image_saver_thread.start()
+
+    inference_key, env_key = jax.random.split(jax.random.key(42), 2)
+    
+    jit_reset = jax.jit(ba.reset)
+    jit_step = jax.jit(ba.step)
+    
+    jit_get_action = jax.jit(agent.get_action)
+
+    state = jit_reset(env_key)
+
+    width, height = 1280, 720
+    ba.model.vis.global_.offwidth = width
+    ba.model.vis.global_.offheight = height
+    renderer = mujoco.Renderer(ba.model, width=width, height=height)
+
+    camera = mujoco.MjvCamera()
+    camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+    camera.trackbodyid = 1 
+    camera.distance = 2.5 
+
+    pygame.init()
+    screen = pygame.display.set_mode((width, height))
+    pygame.display.set_caption(f"Spider Rescue: {args.agent}")
+    clock = pygame.time.Clock()
+    keymap = {pygame.K_ESCAPE: 0.0, pygame.K_SPACE: 0.0}
+
+    rewards_history = deque([0.0]*1000, maxlen=1000)
+    frame = 0
+    # =======================================================
+    # БЛОК ВЫГРУЗКИ ДАННЫХ ДЛЯ ТЕСТИРОВАНИЯ В EXCEL
+    # =======================================================
+    print("\n" + "="*40)
+    print("ВЫГРУЗКА ДАННЫХ ДЛЯ EXCEL (МОТОР 1)")
+    
+    test_obs = jp.expand_dims(state['obs'], 0)
+    test_obs_norm = normalize_obs(test_obs, obs_rms_mean, obs_rms_var)
+    test_key = jax.random.key(777) 
+    
+    mean, log_std = agent.apply({'params': agent_params}, test_obs_norm)
+    
+    std = jp.exp(log_std)
+    noise = jax.random.normal(test_key, shape=mean.shape)
+    x_t = mean + std * noise
+    
+    action_scale = (ba.ctrlrange_high - ba.ctrlrange_low) / 2.0
+    
+    normal_log_prob = -0.5 * (((x_t - mean) / std) ** 2 + 2 * log_std + jp.log(2 * jp.pi))
+    log_tanh_deriv = 2.0 * (jp.log(2.0) - x_t - jax.nn.softplus(-2.0 * x_t))
+    single_log_prob = normal_log_prob - (jp.log(action_scale) + log_tanh_deriv)
+    
+    print(f"Mean      (M): {float(mean[0, 0]):.6f}")
+    print(f"Log_Std   (L): {float(log_std[0, 0]):.6f}")
+    print(f"Noise     (E): {float(noise[0, 0]):.6f}")
+    print(f"Итог Log_Prob: {float(single_log_prob[0, 0]):.6f}")
+    print("="*40 + "\n")
+    # =======================================================
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                finish(image_queue, image_saver_thread)
+            if event.type == pygame.KEYDOWN:
+                keymap[event.key] = 1.0
+            if event.type == pygame.KEYUP:
+                keymap[event.key] = 0.0
+
+        if keymap[pygame.K_ESCAPE] > 0.0:
+            finish(image_queue, image_saver_thread)
+
+        if keymap[pygame.K_SPACE] > 0.0:
+            state = jit_reset(jax.random.key(time.time_ns()))
+
+        mjx.get_data_into(ba.data, ba.model, state['data'])
+        mujoco.mj_forward(ba.model, ba.data)
+        renderer.update_scene(ba.data, camera=camera)
+        pixels = renderer.render()
+
+        if image_queue is not None:
+            px = pixels if args.save_mode in ['images', 'both'] else None
+            xp = ba.data.xpos if args.save_mode in ['positions', 'both'] else None
+            xm = ba.data.xmat if args.save_mode in ['positions', 'both'] else None
+            image_queue.put((frame, px, xp, xm))
+
+        pixels_surf = np.swapaxes(pixels, 0, 1)
+        screen.blit(pygame.surfarray.make_surface(pixels_surf), (0, 0))
+
+        scale = 40
+        cx, cy = 1080, 600
+        spider_pos = state['last_com']
+
+        pygame.draw.rect(screen, (0, 255, 0), (cx-100, cy-100, 200, 200), 2)
+        pygame.draw.circle(screen, (255, 0, 0), (int(cx + spider_pos[0]*scale), int(cy - spider_pos[1]*scale)), 8)
+
+        inf_key, inference_key = jax.random.split(inference_key)
+
+        obs_batched = jp.expand_dims(state['obs'], 0)
+        
+        obs_norm = normalize_obs(obs_batched, obs_rms_mean, obs_rms_var)
+
+        _, _, action = jit_get_action(agent_params, obs_norm, inf_key)
+
+        state, _, reward, done, val_dist = jit_step(state, jp.squeeze(action))
+
+        pygame.display.flip()
+        
+        reward_val = float(reward[0])
+        rewards_history.append(reward_val)
+
+        if frame % 20 == 0:
+            print(f"Step: {state['step']} | Rew: {reward_val:.4f} | Dist: {val_dist:.2f} | FPS: {clock.get_fps():.1f}")
+    
+        clock.tick(50) 
+        frame += 1
+
+if __name__ == "__main__":
+    from matplotlib import pyplot as plt
+    from flax import serialization
+    import pygame
+    from pygame.locals import QUIT
+    from flax import serialization
+    from agent import ActorSimple_skip
+    import numpy as np
+    import argparse
+    import os
+    import sys
+    import time
+    import threading
+    from queue import Queue
+    from collections import deque
+    main()
+
+=========================================
+FILE: models/arena.xml
+=========================================
+
+<mujoco model="hexapod_robot_sw_matched_meshes_rad">
+  <!-- Вся симуляция, включая euler, теперь строго в радианах -->
+  <compiler angle="radian" coordinate="local" eulerseq="XYZ" meshdir="meshes/" inertiafromgeom="false"/>
+  
+  <option timestep="0.00416" iterations="50" tolerance="1e-10" solver="Newton" jacobian="sparse"/>
+
+  <default>
+    <!-- stiffness="0" дает моторам работать без сопротивления пружин -->
+    <joint armature="0.01" damping="0.3" stiffness="0" limited="true"/>
+    <geom contype="1" conaffinity="2" condim="3" density="1000" 
+          friction="2.0 0.1 0.1" 
+          solref="0.005 1" 
+          solimp="0.9 0.99 0.001"/>
+  </default>
+  
+  <asset>
+    <texture builtin="gradient" height="100" rgb1=".4 .5 .6" rgb2="0 0 0" type="skybox" width="100"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
+    <material name="m_arena" reflectance="0.5" texture="texplane"/>
+
+    <!-- РЕГИСТРАЦИЯ STL СЕТОК РОБОТА -->
+    <mesh name="Hexapod_Body" file="Hexapod_Body.STL"/>
+    
+    <!-- Leg 1 Meshes -->
+    <mesh name="Leg_One_Motor_One" file="Leg_One_Motor_One.STL"/>
+    <mesh name="Leg_One_Joint_One" file="Leg_One_Joint_One.STL"/>
+    <mesh name="Leg_One_Motor_Two" file="Leg_One_Motor_Two.STL"/>
+    <mesh name="Leg_One_Joint_Two" file="Leg_One_Joint_Two.STL"/>
+    <mesh name="Leg_One_Motor_Three" file="Leg_One_Motor_Three.STL"/>
+    <mesh name="Leg_One_Foot" file="Leg_One_Foot.STL"/>
+
+    <!-- Leg 2 Meshes -->
+    <mesh name="Leg_Two_Motor_One" file="Leg_Two_Motor_One.STL"/>
+    <mesh name="Leg_Two_Joint_One" file="Leg_Two_Joint_One.STL"/>
+    <mesh name="Leg_Two_Motor_Two" file="Leg_Two_Motor_Two.STL"/>
+    <mesh name="Leg_Two_Joint_Two" file="Leg_Two_Joint_Two.STL"/>
+    <mesh name="Leg_Two_Motor_Three" file="Leg_Two_Motor_Three.STL"/>
+    <mesh name="Leg_Two_Foot" file="Leg_Two_Foot.STL"/>
+
+    <!-- Leg 3 Meshes -->
+    <mesh name="Leg_Three_Motor_One" file="Leg_Three_Motor_One.STL"/>
+    <mesh name="Leg_Three_Joint_One" file="Leg_Three_Joint_One.STL"/>
+    <mesh name="Leg_Three_Motor_Two" file="Leg_Three_Motor_Two.STL"/>
+    <mesh name="Leg_Three_Joint_Two" file="Leg_Three_Joint_Two.STL"/>
+    <mesh name="Leg_Three_Motor_Three" file="Leg_Three_Motor_Three.STL"/>
+    <mesh name="Leg_Three_Foot" file="Leg_Three_Foot.STL"/>
+
+    <!-- Leg 4 Meshes -->
+    <mesh name="Leg_Four_Motor_One" file="Leg_Four_Motor_One.STL"/>
+    <mesh name="Leg_Four_Joint_One" file="Leg_Four_Joint_One.STL"/>
+    <mesh name="Leg_Four_Motor_Two" file="Leg_Four_Motor_Two.STL"/>
+    <mesh name="Leg_Four_Joint_Two" file="Leg_Four_Joint_Two.STL"/>
+    <mesh name="Leg_Four_Motor_Three" file="Leg_Four_Motor_Three.STL"/>
+    <mesh name="Leg_Four_Foot" file="Leg_Four_Foot.STL"/>
+
+    <!-- Leg 5 Meshes -->
+    <mesh name="Leg_Five_Motor_One" file="Leg_Five_Motor_One.STL"/>
+    <mesh name="Leg_Five_Joint_One" file="Leg_Five_Joint_One.STL"/>
+    <mesh name="Leg_Five_Motor_Two" file="Leg_Five_Motor_Two.STL"/>
+    <mesh name="Leg_Five_Joint_Two" file="Leg_Five_Joint_Two.STL"/>
+    <mesh name="Leg_Five_Motor_Three" file="Leg_Five_Motor_Three.STL"/>
+    <mesh name="Leg_Five_Foot" file="Leg_Five_Foot.STL"/>
+
+    <!-- Leg 6 Meshes -->
+    <mesh name="Leg_Six_Motor_One" file="Leg_Six_Motor_One.STL"/>
+    <mesh name="Leg_Six_Joint_One" file="Leg_Six_Joint_One.STL"/>
+    <mesh name="Leg_Six_Motor_Two" file="Leg_Six_Motor_Two.STL"/>
+    <mesh name="Leg_Six_Joint_Two" file="Leg_Six_Joint_Two.STL"/>
+    <mesh name="Leg_Six_Motor_Three" file="Leg_Six_Motor_Three.STL"/>
+    <mesh name="Leg_Six_Foot" file="Leg_Six_Foot.STL"/>
+  </asset>
+
+  <worldbody>
+    <light diffuse="1 1 1" dir="0 0 -1" directional="true" pos="0 0 2.5"/>
+    <geom material="m_arena" name="floor" pos="0 0 0" size="20 20 0.05" type="plane" 
+          contype="2" conaffinity="1" 
+          friction="2.0 0.1 0.1" 
+          solref="0.005 1" 
+          solimp="0.9 0.99 0.001"/>
+
+    <!-- КОРПУС РОБОТА -->
+    <body name="Hexapod_Body" pos="0 0 0.15">
+      <camera name="track" mode="trackcom" pos="0 -1.5 1.5" xyaxes="1 0 0 0 0.7 0.7"/>
+      <joint name="root" type="free" limited="false" armature="0" damping="0"/>
+      
+      <inertial pos="0.000467 0.000481 -0.022293" mass="0.252992" diaginertia="0.0003353 0.0003312 0.0006622"/>
+      <geom type="mesh" mesh="Hexapod_Body" rgba="0.8 0.1 0.1 1"/>
+
+      <!-- ==================== LEG ONE ==================== -->
+      <body name="Leg_One_Motor_One" pos="0.0431 0.074825 -0.035" euler="1.570796 0 -2.094395">
+        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+        <geom type="mesh" mesh="Leg_One_Motor_One" rgba="0.3 0.3 0.3 1"/>
+        
+        <body name="Leg_One_Joint_One" pos="-0.0135 0.037 0" euler="3.141593 0 1.570796">
+          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
+          <joint name="Motor_One_Joint_One" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
+          <geom type="mesh" mesh="Leg_One_Joint_One" rgba="0.7 0.7 0.7 1"/>
+
+          <body name="Leg_One_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.570796 0 -1.570796">
+            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+            <joint name="Joint_One_Motor_One" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
+            <geom type="mesh" mesh="Leg_One_Motor_Two" rgba="0.3 0.3 0.3 1"/>
+
+            <body name="Leg_One_Joint_Two" pos="0.0505 -0.042 0" euler="3.141593 0 -1.570796">
+              <inertial pos="-0.025268 -0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
+              <geom type="mesh" mesh="Leg_One_Joint_Two" rgba="0.7 0.7 0.7 1"/>
+
+              <body name="Leg_One_Motor_Three" pos="0 -0.0175 0" euler="0 0 -1.570796">
+                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+                <joint name="Joint_Two_Motor_One" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+                <geom type="mesh" mesh="Leg_One_Motor_Three" rgba="0.3 0.3 0.3 1"/>
+
+                <body name="Leg_One_Foot" pos="0.0415 -0.021 -0.0125" euler="-1.570796 0 1.570796">
+                  <inertial pos="0.00007 -0.038827 0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
+                  <geom type="mesh" mesh="Leg_One_Foot" rgba="0.7 0.7 0.7 1"/>
+                  <site name="elbow_one" pos="-0.001 -0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
+                  <site name="tibia_one_tip" pos="0 -0.0388 0.007" size="0.01"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ==================== LEG TWO ==================== -->
+      <body name="Leg_Two_Motor_One" pos="0.08625 0.000087 -0.035" euler="1.570796 0 3.141593">
+        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+        <geom type="mesh" mesh="Leg_Two_Motor_One" rgba="0.3 0.3 0.3 1"/>
+
+        <body name="Leg_Two_Joint_One" pos="-0.0135 0.037 0" euler="3.141593 0 1.570796">
+          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
+          <joint name="Motor_One_Joint_Two" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
+          <geom type="mesh" mesh="Leg_Two_Joint_One" rgba="0.7 0.7 0.7 1"/>
+
+          <body name="Leg_Two_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.570796 0 -1.570796">
+            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+            <joint name="Joint_One_Motor_Two" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
+            <geom type="mesh" mesh="Leg_Two_Motor_Two" rgba="0.3 0.3 0.3 1"/>
+
+            <body name="Leg_Two_Joint_Two" pos="0.0505 0 0" euler="-3.141593 0 1.570796">
+              <inertial pos="-0.016732 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
+              <geom type="mesh" mesh="Leg_Two_Joint_Two" rgba="0.7 0.7 0.7 1"/>
+
+              <body name="Leg_Two_Motor_Three" pos="-0.042 0.0175 0" euler="0 0 1.570796">
+                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+                <joint name="Joint_Two_Motor_Two" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+                <geom type="mesh" mesh="Leg_Two_Motor_Three" rgba="0.3 0.3 0.3 1"/>
+
+                <body name="Leg_Two_Foot" pos="0.0415 -0.0265 0.0115" euler="-1.5708 0 1.5708">
+                  <inertial pos="0.005570 -0.014827 0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
+                  <geom type="mesh" mesh="Leg_Two_Foot" rgba="0.7 0.7 0.7 1"/>
+                  <site name="elbow_two" pos="0.005 0.005 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
+                  <site name="tibia_two_tip" pos="0.005 -0.0148 0.007" size="0.01"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ==================== LEG THREE ==================== -->
+      <body name="Leg_Three_Motor_One" pos="0.0431 -0.07465 -0.035" euler="1.570796 0 2.094395">
+        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+        <geom type="mesh" mesh="Leg_Three_Motor_One" rgba="0.3 0.3 0.3 1"/>
+
+        <body name="Leg_Three_Joint_One" pos="-0.0135 0.037 0" euler="3.141593 0 1.570796">
+          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
+          <joint name="Motor_One_Joint_Three" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
+          <geom type="mesh" mesh="Leg_Three_Joint_One" rgba="0.7 0.7 0.7 1"/>
+
+          <body name="Leg_Three_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.570796 0 -1.570796">
+            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+            <joint name="Joint_One_Motor_Three" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
+            <geom type="mesh" mesh="Leg_Three_Motor_Two" rgba="0.3 0.3 0.3 1"/>
+
+            <body name="Leg_Three_Joint_Two" pos="0.0505 0 0" euler="3.141593 0 1.570796">
+              <inertial pos="-0.016732 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
+              <geom type="mesh" mesh="Leg_Three_Joint_Two" rgba="0.7 0.7 0.7 1"/>
+
+              <body name="Leg_Three_Motor_Three" pos="-0.042 0.0175 0" euler="0 0 1.570796">
+                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+                <joint name="Joint_Two_Motor_Three" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+                <geom type="mesh" mesh="Leg_Three_Motor_Three" rgba="0.3 0.3 0.3 1"/>
+
+                <body name="Leg_Three_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
+                  <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
+                  <geom type="mesh" mesh="Leg_Three_Foot" rgba="0.7 0.7 0.7 1"/>
+                  <site name="elbow_three" pos="0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
+                  <site name="tibia_three_tip" pos="0 0.0388 -0.007" size="0.01"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ==================== LEG FOUR ==================== -->
+      <body name="Leg_Four_Motor_One" pos="-0.0432 -0.07465 -0.035" euler="1.5708 0 1.0472">
+        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+        <geom type="mesh" mesh="Leg_Four_Motor_One" rgba="0.3 0.3 0.3 1"/>
+
+        <body name="Leg_Four_Joint_One" pos="-0.0135 0.037 0" euler="3.1416 0 1.5708">
+          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
+          <joint name="Motor_One_Joint_Four" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
+          <geom type="mesh" mesh="Leg_Four_Joint_One" rgba="0.7 0.7 0.7 1"/>
+
+          <body name="Leg_Four_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.5708 0 -1.5708">
+            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+            <joint name="Joint_One_Motor_Four" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
+            <geom type="mesh" mesh="Leg_Four_Motor_Two" rgba="0.3 0.3 0.3 1"/>
+
+            <body name="Leg_Four_Joint_Two" pos="0.0505 0 0" euler="3.1416 0 1.5708">
+              <inertial pos="-0.016732 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
+              <geom type="mesh" mesh="Leg_Four_Joint_Two" rgba="0.7 0.7 0.7 1"/>
+
+              <body name="Leg_Four_Motor_Three" pos="-0.042 0.0175 0" euler="0 0 1.5708">
+                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+                <joint name="Joint_Two_Motor_Four" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+                <geom type="mesh" mesh="Leg_Four_Motor_Three" rgba="0.3 0.3 0.3 1"/>
+
+                  <body name="Leg_Four_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
+                    <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
+                  
+                    <!-- Планка стопы (теперь без коллизий) -->
+                    <geom type="mesh" mesh="Leg_Four_Foot" rgba="0.7 0.7 0.7 1"/>
+                    <site name="elbow_four" pos="0.0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
+                    <site name="tibia_four_tip" pos="0 0.0388 -0.007" size="0.01"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ==================== LEG FIVE ==================== -->
+      <body name="Leg_Five_Motor_One" pos="-0.08635 0.000087 -0.035" euler="1.5708 0 0">
+        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+        <geom type="mesh" mesh="Leg_Five_Motor_One" rgba="0.3 0.3 0.3 1"/>
+
+        <body name="Leg_Five_Joint_One" pos="-0.0135 0.037 0" euler="3.1416 0 1.5708">
+          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
+          <joint name="Motor_One_Joint_Five" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
+          <geom type="mesh" mesh="Leg_Five_Joint_One" rgba="0.7 0.7 0.7 1"/>
+
+          <body name="Leg_Five_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.5708 0 -1.5708">
+            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+            <joint name="Joint_One_Motor_Five" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
+            <geom type="mesh" mesh="Leg_Five_Motor_Two" rgba="0.3 0.3 0.3 1"/>
+
+            <body name="Leg_Five_Joint_Two" pos="0.0505 -0.042 0" euler="0 0 -1.5708">
+              <inertial pos="-0.025268 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
+              <geom type="mesh" mesh="Leg_Five_Joint_Two" rgba="0.7 0.7 0.7 1"/>
+
+              <body name="Leg_Five_Motor_Three" pos="0 0.0175 0" euler="3.1416 0 1.5708">
+                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+                <joint name="Joint_Two_Motor_Five" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+                <geom type="mesh" mesh="Leg_Five_Motor_Three" rgba="0.3 0.3 0.3 1"/>
+
+                <body name="Leg_Five_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
+                  <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
+                  <geom type="mesh" mesh="Leg_Five_Foot" rgba="0.7 0.7 0.7 1"/>
+                  <site name="elbow_five" pos="0.0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
+                  <site name="tibia_five_tip" pos="0 0.0388 -0.007" size="0.01"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ==================== LEG SIX ==================== -->
+      <body name="Leg_Six_Motor_One" pos="-0.0432 0.074825 -0.035" euler="1.5708 0 -1.0472">
+        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+        <geom type="mesh" mesh="Leg_Six_Motor_One" rgba="0.3 0.3 0.3 1"/>
+
+        <body name="Leg_Six_Joint_One" pos="-0.0135 0.037 0" euler="3.1416 0 1.5708">
+          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
+          <joint name="Motor_One_Joint_Six" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
+          <geom type="mesh" mesh="Leg_Six_Joint_One" rgba="0.7 0.7 0.7 1"/>
+
+          <body name="Leg_Six_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.5708 0 -1.5708">
+            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+            <joint name="Joint_One_Motor_Six" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
+            <geom type="mesh" mesh="Leg_Six_Motor_Two" rgba="0.3 0.3 0.3 1"/>
+
+            <body name="Leg_Six_Joint_Two" pos="0.0505 -0.042 0" euler="0 0 -1.5708">
+              <inertial pos="-0.025268 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
+              <geom type="mesh" mesh="Leg_Six_Joint_Two" rgba="0.7 0.7 0.7 1"/>
+
+              <body name="Leg_Six_Motor_Three" pos="0 0.0175 0" euler="3.1416 0 1.5708">
+                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
+                <joint name="Joint_Two_Motor_Six" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+                <geom type="mesh" mesh="Leg_Six_Motor_Three" rgba="0.3 0.3 0.3 1"/>
+
+                <body name="Leg_Six_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
+                  <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
+                  <geom type="mesh" mesh="Leg_Six_Foot" rgba="0.7 0.7 0.7 1"/>
+                  <site name="elbow_six" pos="0.0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
+                  <site name="tibia_six_tip" pos="0 0.0388 -0.007" size="0.01"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- ПРИВОДЫ -->
+    <!-- LEG ONE -->
+    <position joint="Motor_One_Joint_One" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_One_Motor_One" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_Two_Motor_One" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    
+    <!-- LEG TWO -->
+    <position joint="Motor_One_Joint_Two" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_One_Motor_Two" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_Two_Motor_Two" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    
+    <!-- LEG THREE -->
+    <position joint="Motor_One_Joint_Three" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_One_Motor_Three" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_Two_Motor_Three" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    
+    <!-- LEG FOUR -->
+    <position joint="Motor_One_Joint_Four" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_One_Motor_Four" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_Two_Motor_Four" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+
+    <!-- LEG FIVE -->
+    <position joint="Motor_One_Joint_Five" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_One_Motor_Five" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_Two_Motor_Five" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    
+    <!-- LEG SIX -->
+    <position joint="Motor_One_Joint_Six" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_One_Motor_Six" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <position joint="Joint_Two_Motor_Six" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+  </actuator>
+</mujoco>
+

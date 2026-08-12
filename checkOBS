@@ -1,0 +1,12 @@
+import numpy as np
+
+for path in ['checkpoints/final_quadruped_model/obs_norm.npz', 'obs-norm/obs_norm_last.npz']:
+    try:
+        data = np.load(path)
+        mean_has_nan = np.isnan(data['obs_mean']).any()
+        var_has_nan = np.isnan(data['obs_var']).any()
+        print(f"{path} -> Mean NaN: {mean_has_nan}, Var NaN: {var_has_nan}")
+        print("Mean sample:", data['obs_mean'][:5])
+        print("Var sample:", data['obs_var'][:5])
+    except Exception as e:
+        print(f"Ошибка чтения {path}: {e}")

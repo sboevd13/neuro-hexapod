@@ -24,11 +24,11 @@ class SoftQNetwork_skip(nn.Module):
 
 if __name__ == "__main__":
 
-    observation_size = 73  
-    action_size = 8      
+    observation_size = 49
+    action_size = 12
     batch_size = 7
     
-    model = SoftQNetwork_skip(hidden1_size=256, hidden2_size=256)
+    model = SoftQNetwork_skip(hidden_size1=512, hidden_size2=512)
 
     rng_key = jax.random.PRNGKey(0)
     

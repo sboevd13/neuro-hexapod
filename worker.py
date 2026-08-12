@@ -4,6 +4,7 @@ import logging
 
 import jax
 from jax import jit, vmap
+from jax import numpy as jp
 import time
 from collections import deque
 import numpy as np
@@ -32,7 +33,11 @@ class WorkerThread(threading.Thread):
         self.agent_queue = agent_queue
         self.running = False
         self.device = config['worker_device']
+        
         self.env_batch_size = config['worker_batch_size']
+        self.validation_batch_size = 64 
+        self.total_batch_size = self.env_batch_size + self.validation_batch_size
+
         self.random_steps_count = config['random_steps_count']
 
         self.validant_last_reward = None
@@ -41,180 +46,185 @@ class WorkerThread(threading.Thread):
         self.validation_steps = 2000
         self.validation_start = 2000
         
-        self.sims_per_validation_agent = 50
-        
         self.step = 0
         self.env = env
         
-        validation_agents_count = len(self.agent_config['validation_agent_params'])
-        validation_batch_size = validation_agents_count * self.sims_per_validation_agent
-        self.total_batch_size = self.env_batch_size + validation_batch_size
+        logger.debug(f'Total batch size: {self.total_batch_size}')
         
-        logger.debug(f'Total batch size: {self.total_batch_size}, trainee batch size: {self.env_batch_size}, validation batch size: {validation_batch_size}')
+        # Оптимизировано: Накопитель наград теперь хранится и обрабатывается на CPU через NumPy
+        self._episode_rewards = np.zeros((self.env_batch_size, 1))
         
-        self._episode_rewards = jax.device_put(jax.numpy.zeros((self.env_batch_size, 1)), device=self.device)
-        
+        # Инициализация ключей JAX
         self.rng_key, key0 = jax.device_put(jax.random.split(rng_key, 2), device=self.device)
-        
         self.env_rng_key = jax.device_put(jax.random.split(key0, self.total_batch_size), device=self.device)
         
         self.batched_reset = vmap(self.env.reset)
         self.batched_step = jit(vmap(self.env.step))
         
-        self.jit_agent_double_step = jit(self.agent_double_step)
-        
+        self.jit_agent_step = jit(self.agent_step) 
         self.jit_random_step = jit(self.random_step)
         self.jit_reset = jit(self.batched_reset)
         
         self.normalize_obs = True
         
-        self.discard_agent0_data = False
-        self.discard_agent1_data = False
-        
         self.running_obs_mean_std = RunningMeanStd(shape=self.env.observation_space_shape)
         
         if self.normalize_obs:
-            obs_norm_values = np.load('obs-norm/obs_norm_legacy.npz')
-            self.obs_rms_mean = jax.device_put(jax.numpy.array(obs_norm_values['obs_mean']), device=self.device)
-            self.obs_rms_var = jax.device_put(jax.numpy.array(obs_norm_values['obs_var']),  device=self.device)
-            logging.debug('obs mean', self.obs_rms_mean)
-            logging.debug('obs var', self.obs_rms_var)
-            self.obs_rms_mean = jax.numpy.tile(self.obs_rms_mean, (self.total_batch_size, 1))
-            self.obs_rms_var = jax.numpy.tile(self.obs_rms_var, (self.total_batch_size, 1))
+            norm_path = 'obs-norm/obs_norm_last.npz'
+            if os.path.exists(norm_path):
+                obs_norm_values = np.load(norm_path)
+                self.obs_rms_mean = jax.device_put(jax.numpy.array(obs_norm_values['obs_mean']), device=self.device)
+                self.obs_rms_var = jax.device_put(jax.numpy.array(obs_norm_values['obs_var']),  device=self.device)
+                if 'obs_count' in obs_norm_values:
+                    self.running_obs_mean_std.count = float(obs_norm_values['obs_count'])
+            else:
+                self.obs_rms_mean = jax.device_put(jax.numpy.zeros(self.env.observation_space_shape), device=self.device)
+                self.obs_rms_var = jax.device_put(jax.numpy.ones(self.env.observation_space_shape), device=self.device)
         
         self.episode_reward = deque(maxlen=5)
-        
+
+        self.best_agent_heights = []
+        self.best_agent_xs = [] 
+        self.best_agent_ys = []
+
+        self.plot_env_idx = self.env_batch_size
+
+        self.local_buffer_size = 16  # Размер "ведра" (накапливаем 16 шагов)
+        self.local_obs = []
+        self.local_next_obs = []
+        self.local_actions = []
+        self.local_rewards = []
+        self.local_terminated = []
         
     def random_step(self, env_state, inference_key):
-        k = 1.00
+        k = 1.00 
+        obs_raw = env_state['obs']  # Сохраняем сырое наблюдение
         
-        agent0_obs = self.normalize_obs_if_needed(env_state['obs'][0])
-        agent1_obs = self.normalize_obs_if_needed(env_state['obs'][1])
+        action = jax.random.uniform(
+            inference_key, 
+            (self.total_batch_size, self.env.action_space_shape[0]),
+            minval=k * self.env.ctrlrange_low, 
+            maxval=k * self.env.ctrlrange_high
+        )
         
-        action0 = jax.random.uniform(inference_key, 
-                                     (self.total_batch_size, self.env.action_space_shape[0]),
-                                     minval=k*self.env.ctrlrange_low, maxval=k*self.env.ctrlrange_high)
+        state, true_obs, true_reward, terminated, validation_rewards = self.batched_step(env_state, action)
         
-        action1 = jax.random.uniform(inference_key, 
-                                     (self.total_batch_size, self.env.action_space_shape[0]),
-                                     minval=k*self.env.ctrlrange_low, maxval=k*self.env.ctrlrange_high)
-        actions = (action0, action1)
-        combined_actions = jax.numpy.concat(actions, axis=1)
-        state, true_obs, true_reward, terminated, validation_rewards  = self.batched_step(env_state, combined_actions)
+        validation_terminated = jp.zeros(1)[0]
+        validation_reward = jp.zeros(1)[0]
         
-        agent0_true_obs = self.normalize_obs_if_needed(true_obs[0])
-        agent1_true_obs = self.normalize_obs_if_needed(true_obs[1])
-        
-        validation_terminated = 0
-        validation_reward = 0
-        return state, tuple(actions), (agent0_obs, agent1_obs), (agent0_true_obs, agent1_true_obs), true_reward, terminated, validation_terminated, validation_reward
-    
-        
-    def agent_double_step(self, env_state, inference_key, trainee_params, validant_params, *opponent_params):
-        val_agent_params = self.agent_config['validation_agent_params']
-        opponen_count = len(opponent_params)
-        val_count = len(val_agent_params)
-        ref_count = len(self.agent_config['ref_agent_params'])
-        
-        train_key, validation_key = jax.random.split(inference_key, 2)
-        
-        train_keys = jax.random.split(train_key, opponen_count+1)
-        opponent_keys = train_keys[1:]
-        
-        validation_keys = jax.random.split(validation_key, val_count+1)
-        val_keys = validation_keys[1:]
+        # Возвращаем obs_raw и true_obs (сырые) вместо нормализованных
+        return state, action, obs_raw, true_obs, true_reward, terminated, validation_terminated, validation_reward
+
+    def agent_step(self, env_state, inference_key, trainee_params, validant_params):
+        train_key, val_key = jax.random.split(inference_key, 2)
         
         trainee_func = self.agent_config['trainee_func']
-        ref_agent_func = self.agent_config['ref_agent_func']
-        val_agent_func = self.agent_config['validation_agent_func']
         
-        agent0_obs = self.normalize_obs_if_needed(env_state['obs'][0])
-        agent1_obs = self.normalize_obs_if_needed(env_state['obs'][1])
+        obs_raw = env_state['obs']
+        agent_obs = self.normalize_obs_if_needed(obs_raw)  # Нормализуем ТОЛЬКО для инференса актера
         
-        action0, _, _ = trainee_func(trainee_params, agent0_obs[:self.env_batch_size], train_keys[0])
-        action_validant, _, _ = trainee_func(validant_params, agent0_obs[self.env_batch_size:], validation_keys[0])
+        action_trainee, _, _ = trainee_func(
+            trainee_params, 
+            agent_obs[:self.env_batch_size], 
+            train_key
+        )
         
-        opponent_obs_size = self.env_batch_size // opponen_count
-        opponent_actions = []
-        opponent_obs_ptr = 0
+        action_val, _, _ = trainee_func(
+            trainee_params, 
+            agent_obs[self.env_batch_size:], 
+            val_key
+        )
         
-        for i in range(opponen_count):
-                next_obs_ptr = opponent_obs_ptr + opponent_obs_size
-                current_opponent_obs =  agent1_obs[opponent_obs_ptr:next_obs_ptr] if i < opponen_count-1 else agent1_obs[opponent_obs_ptr:self.env_batch_size]
-                #print(f'obs[{opponent_obs_ptr}:{next_obs_ptr}]')
-                if i < ref_count:
-                    opponent_action, _, _ = ref_agent_func(opponent_params[i], current_opponent_obs, opponent_keys[i])
-                else:
-                    opponent_action, _, _ = trainee_func(opponent_params[i], current_opponent_obs, opponent_keys[i])
-                opponent_actions.append(opponent_action)
-                opponent_obs_ptr = next_obs_ptr
-                
-        val_obs_ptr = self.env_batch_size 
-        for i in range(val_count):
-                next_obs_ptr = val_obs_ptr + self.sims_per_validation_agent
-                current_opponent_obs =  agent1_obs[val_obs_ptr:next_obs_ptr] if i < val_count-1 else agent1_obs[val_obs_ptr:]
-                #print(f'obs[{opponent_obs_ptr}:{next_obs_ptr}]')
-                opponent_action, _, _ = val_agent_func(val_agent_params[i], current_opponent_obs, val_keys[i])
-                opponent_actions.append(opponent_action)
-                val_obs_ptr = next_obs_ptr
-            
-        actions = (jax.numpy.concatenate((action0, action_validant), axis=0), 
-                   jax.numpy.concatenate(opponent_actions, axis=0))
+        combined_actions = jax.numpy.concatenate([action_trainee, action_val], axis=0)
         
-        state, true_obs, true_reward, terminated, validation_rewards = self.batched_step(env_state, jax.numpy.concat(actions, axis=1))
+        state, true_obs, true_reward, terminated, validation_rewards = self.batched_step(env_state, combined_actions)
         
-        agent0_true_obs = self.normalize_obs_if_needed(true_obs[0])
-        agent1_true_obs = self.normalize_obs_if_needed(true_obs[1])
+        validation_terminated_count = jax.numpy.sum(terminated[self.env_batch_size:])
+        validation_reward_sum = jax.numpy.sum(validation_rewards[self.env_batch_size:])
         
-        validation_terminated = jax.numpy.sum(terminated[self.env_batch_size:])
-        validation_reward = jax.numpy.sum(validation_rewards[0][self.env_batch_size:])
-        return state, actions, (agent0_obs, agent1_obs), (agent0_true_obs, agent1_true_obs), true_reward, terminated, validation_terminated, validation_reward
-        
-    
+        # Возвращаем obs_raw и true_obs (сырые) вместо нормализованных для записи в буфер
+        return (state, combined_actions, obs_raw, true_obs, 
+                true_reward, terminated, 
+                validation_terminated_count, validation_reward_sum)
+
     def perform_step(self, state0, step_fun, agent_params=None):
         inference_key, self.rng_key = jax.random.split(self.rng_key, 2)
 
-        self.running_obs_mean_std.update(state0['obs'][0])
-        self.running_obs_mean_std.update(state0['obs'][1])
+        self.running_obs_mean_std.update(state0['obs'])
         
-        state, actions, obs0, obs1, rewards, terminated, validation_terminated, validation_reward = step_fun(state0, inference_key, *agent_params) if agent_params is not None else step_fun(state0, inference_key)
-        
-        self.compute_metrics(rewards, terminated)
-        
-        obss_cpu = [jax.device_get(obs) for obs in obs0]
-        next_obs_cpu = [jax.device_get(t_obs) for t_obs in obs1]
-        reward_cpu = [jax.device_get(t_rew) for t_rew in rewards]
-        action_cpu = jax.device_get(actions)
-        terminated_cpu = jax.device_get(terminated)
+        if self.normalize_obs:
+            self.obs_rms_mean = self.running_obs_mean_std.mean
+            self.obs_rms_var = self.running_obs_mean_std.var
 
-        if not self.discard_agent0_data:
-            self.output_queue.put((obss_cpu[0], 
-                                   next_obs_cpu[0],
-                                   action_cpu[0],
-                                   reward_cpu[0], 
-                                   terminated_cpu))
+        res = step_fun(state0, inference_key, *agent_params) if agent_params is not None else step_fun(state0, inference_key)
+        state, action, obs, next_obs, reward, terminated, val_term, val_rew = res
         
-        if not self.discard_agent1_data:
-            self.output_queue.put((obss_cpu[1],
-                                   next_obs_cpu[1],
-                                   action_cpu[1],
-                                   reward_cpu[1],
-                                   terminated_cpu.copy()))
-        return state, validation_terminated, validation_reward
-    
-    
-    def compute_metrics(self, rewards, terminated):
-        self._episode_rewards += rewards[0][:self.env_batch_size]
-        terminated_count = jax.numpy.sum(terminated[:self.env_batch_size]).item()
+        # Выделяем нужные батчи на GPU без копирования на CPU
+        obs_gpu = obs[:self.env_batch_size]
+        next_obs_gpu = next_obs[:self.env_batch_size]
+        action_gpu = action[:self.env_batch_size]
+        reward_gpu = reward[:self.env_batch_size]
+        terminated_gpu = terminated[:self.env_batch_size]
+
+        # Для подсчета метрик нам все еще нужны награды на CPU.
+        # Но это крошечные массивы (всего 1 число на среду), они копируются мгновенно.
+        reward_cpu, terminated_cpu = jax.device_get((reward_gpu, terminated_gpu))
+        self.compute_metrics_cpu(reward_cpu, terminated_cpu)
+
+        # Накапливаем шаги прямо в видеопамяти (это бесплатно по времени)
+        self.local_obs.append(obs_gpu)
+        self.local_next_obs.append(next_obs_gpu)
+        self.local_actions.append(action_gpu)
+        self.local_rewards.append(reward_gpu)
+        self.local_terminated.append(terminated_gpu)
+
+        # Если накопили 16 шагов, отправляем их одной транзакцией
+        if len(self.local_obs) >= self.local_buffer_size:
+            # Соединяем накопленные шаги в одну большую пачку на GPU
+            stacked_obs = jax.numpy.concatenate(self.local_obs, axis=0)
+            stacked_next_obs = jax.numpy.concatenate(self.local_next_obs, axis=0)
+            stacked_actions = jax.numpy.concatenate(self.local_actions, axis=0)
+            stacked_rewards = jax.numpy.concatenate(self.local_rewards, axis=0)
+            stacked_terminated = jax.numpy.concatenate(self.local_terminated, axis=0)
+
+            # Делаем ОДИН запрос копирования на CPU вместо 16 отдельных!
+            obs_cpu, next_obs_cpu, action_cpu, reward_cpu, terminated_cpu = jax.device_get((
+                stacked_obs, stacked_next_obs, stacked_actions, stacked_rewards, stacked_terminated
+            ))
+
+            # Отправляем готовую большую пачку в буфер
+            self.output_queue.put((
+                obs_cpu, 
+                next_obs_cpu,
+                action_cpu,
+                reward_cpu, 
+                terminated_cpu
+            ))
+
+            # Очищаем временные списки
+            self.local_obs.clear()
+            self.local_next_obs.clear()
+            self.local_actions.clear()
+            self.local_rewards.clear()
+            self.local_terminated.clear()
+        
+        return state, val_term, val_rew
+
+    def compute_metrics_cpu(self, reward_cpu, terminated_cpu):
+        self._episode_rewards += reward_cpu
+        
+        terminated_count = np.sum(terminated_cpu)
         if terminated_count > 0:
-            episode_reward = jax.numpy.sum(self._episode_rewards * terminated[:self.env_batch_size]).item() / terminated_count
-            self.episode_reward.append(episode_reward)
-            self._episode_rewards *= (1 - terminated[:self.env_batch_size])
-     
+            episode_reward = np.sum(self._episode_rewards * terminated_cpu) / terminated_count
+            self.episode_reward.append(float(episode_reward))
+            
+            # Сброс наград для завершенных эпизодов
+            self._episode_rewards *= (1.0 - terminated_cpu)
+            
     def write_params_to_file(self, filename, params):
         with open(filename, 'wb') as f:
             f.write(serialization.to_bytes(params))        
-    
+
     def save_state(self, path, agent_params, qf1_params, qf2_params, q_opt_state, p_opt_state, alpha_opt_state):
         os.makedirs(path, exist_ok=True)
         self.write_params_to_file(os.path.join(path, 'agent.flax'), agent_params)
@@ -223,94 +233,165 @@ class WorkerThread(threading.Thread):
         self.write_params_to_file(os.path.join(path, 'q_opt.flax'), q_opt_state)
         self.write_params_to_file(os.path.join(path, 'p_opt.flax'), p_opt_state)
         self.write_params_to_file(os.path.join(path, 'a_opt.flax'), alpha_opt_state)     
-    
+
     def transfer_params_if_needed(self, params):
             if self.device != self.config['trainer_device']:
                 return jax.device_put(params, self.device)
             return params
-    
+
     def run(self):
         use_norm = '(with obs norm)' if self.normalize_obs else ''
-        logger.info(f"MultiSAC-MJX {use_norm} {self.name} alive on {self.device}!")
+        logger.info(f"Spider-Worker {use_norm} {self.name} alive on {self.device}!")
         self.running = True
 
         state = self.jit_reset(self.env_rng_key)
         state['step'] = jax.random.randint(self.rng_key, state['step'].shape, 0, self.env.max_steps-2) 
         
+        logger.info(f"Starting {self.random_steps_count} random steps to fill buffer...")
         for i in range(self.random_steps_count):
-            state, validation_terminated, validation_reward = self.perform_step(state, self.jit_random_step)
-            if i % 25 == 0 and len(self.episode_reward)>0:
-                episode_reward = jax.numpy.array(self.episode_reward).mean().item()
-                logger.info(f'{i:05d}\t episode_reward: {episode_reward:1.4f}')
+            state, _, _ = self.perform_step(state, self.jit_random_step)
+            if i % 100 == 0 and len(self.episode_reward) > 0:
+                # Оптимизировано: Среднее значение через быстрый numpy на CPU
+                episode_reward = np.mean(self.episode_reward)
+                logger.info(f'Warm-up {i:05d}\t средняя награда: {episode_reward:1.4f}')
                 
-        logger.info('Random steps finised')
+        logger.info('Random steps finished. Starting training loop.')
         
         self.step = 0
-        last_agents = deque(maxlen=self.config["last_agents_count"])
         
-        _, params, qf1, qf2, _, opt_params = self.agent_queue.get()
-        params = self.transfer_params_if_needed(params)
-        ref_agents = self.agent_config["ref_agent_params"]
-        validant_params = params
-        validant_qf1 = qf1
-        validant_qf2 = qf2
+        trainee_name, params, qf1, qf2, global_step, opt_params = self.agent_queue.get()
+        trainee_params = self.transfer_params_if_needed(params)
+        
+        validant_params = trainee_params
+        validant_qf1, validant_qf2 = qf1, qf2
         validant_opt_params = opt_params 
-                
-        for _ in range(self.config["last_agents_count"]):
-            last_agents.append(params) 
-           
-        logger.debug('Starting worker loop')
+        
         total_validation_reward = 0.0
         total_episodes = 0
         validation_step = 0
         
         while self.running: 
-            trainee_name, trainee_params, qf1, qf2, global_step, opt_params = self.agent_queue.get()
-            trainee_params = self.transfer_params_if_needed(trainee_params)
+            if self.step % 16 == 0:
+                trainee_name, trainee_params, qf1, qf2, global_step, opt_params = self.agent_queue.get()
+                trainee_params = self.transfer_params_if_needed(trainee_params)
             
-            if self.step % self.config['self_play_lag'] == 0:
-                    _, p, _, _, _, _ = self.agent_queue.get()
-                    last_agents.append(self.transfer_params_if_needed(p))
-               
-            state, validation_terminated, validation_reward = self.perform_step(state, self.jit_agent_double_step, (trainee_params, validant_params, *list(ref_agents), *list(last_agents)))
+            state, val_term, val_rew = self.perform_step(
+                state, 
+                self.jit_agent_step, 
+                (trainee_params, validant_params)
+            )
             
+            # Оптимизировано: Переносим координаты и шаг ОДНИМ запросом вместо 4 блокировок
+            com_val, step_val = jax.device_get((
+                state['last_com'][self.plot_env_idx], 
+                state['step'][self.plot_env_idx]
+            ))
+            
+            best_agent_x = float(com_val[0])
+            best_agent_y = float(com_val[1])
+            best_agent_z = float(com_val[2])
+            is_reset = (int(step_val) == 0)
+            
+            self.best_agent_xs.append(best_agent_x)
+            self.best_agent_ys.append(best_agent_y)
+            self.best_agent_heights.append(best_agent_z)
+            
+            if is_reset and len(self.best_agent_heights) > 100:
+                role_name = "Ученик (Exploration)" if self.plot_env_idx < self.env_batch_size else "Тестировщик (Validation)"
+                logger.warning(f"Отрисован график для робота №{self.plot_env_idx} ({role_name})")
+                
+                self.plot_and_save_trajectory_graphs()
+                
+                self.best_agent_heights = []
+                self.best_agent_xs = []
+                self.best_agent_ys = []
+                
+                self.plot_env_idx = np.random.randint(0, self.total_batch_size)
+
             if self.step % 5000 == 0:
-                mean = jax.device_get(self.running_obs_mean_std.mean)
-                var = jax.device_get(self.running_obs_mean_std.var)
-                np.savez('obs-norm/obs_norm_last.npz',obs_mean=mean, obs_var=var)
+                mean = self.running_obs_mean_std.mean
+                var = self.running_obs_mean_std.var
+                count = self.running_obs_mean_std.count
+                
+                os.makedirs('obs-norm', exist_ok=True)
+                np.savez('obs-norm/obs_norm_last.npz', 
+                        obs_mean=jax.device_get(mean), 
+                        obs_var=jax.device_get(var),
+                        obs_count=float(count))
+            
             self.step += 1 
             
-            if self.step==self.validation_start:
-                logger.debug(f'Starting agent validation ({self.validation_steps} steps, {self.sims_per_validation_agent} sims per validating agent, {len(self.agent_config["validation_agent_params"])} validation agents)')
-            
-            if self.step>=self.validation_start:
-                total_validation_reward += validation_reward
-                total_episodes += validation_terminated
-                reward_per_episode = total_validation_reward/total_episodes
+            if self.step >= self.validation_start:
+                total_validation_reward += val_rew
+                total_episodes += val_term
                 validation_step += 1  
             
-            if validation_step >= self.validation_steps:
+            if validation_step >= self.validation_steps and total_episodes > 0:
+                reward_per_episode = float(total_validation_reward / total_episodes)
                 self.validant_last_reward = reward_per_episode
                 
                 if self.validant_best_reward is None or reward_per_episode > self.validant_best_reward:
                     self.validant_best_reward = reward_per_episode
 
-                    agent_path=os.path.join('checkpoints', f'{trainee_name}', f'{global_step}')             
-                    logger.info(f"{global_step} new best agent: {reward_per_episode:1.2f} -> '{agent_path}'")
-                    self.save_state(agent_path, validant_params, validant_qf1, validant_qf2, *validant_opt_params)
+                    agent_path = os.path.join('checkpoints', f'{trainee_name}', f'best_at_{global_step}')             
+                    logger.info(f"!!! NEW RECORD: {reward_per_episode:1.2f}m. Saving best agent to '{agent_path}'")
+                    self.save_state(agent_path, trainee_params, qf1, qf2, *opt_params)
+
+                    np.savez(os.path.join(agent_path, 'obs_norm.npz'), 
+                            obs_mean=jax.device_get(self.running_obs_mean_std.mean), 
+                            obs_var=jax.device_get(self.running_obs_mean_std.var),
+                            obs_count=float(self.running_obs_mean_std.count))
                     
-                validant_params = trainee_params
-                validant_opt_params = opt_params
-                validant_qf1 = qf1
-                validant_qf2 = qf2
+                    validant_params = trainee_params
+                    validant_opt_params = opt_params
+                    validant_qf1, validant_qf2 = qf1, qf2
+                
                 total_validation_reward = 0.0
                 total_episodes = 0
                 validation_step = 0
                 
-            
         logger.debug(f"Worker finished")
-    
+
     def normalize_obs_if_needed(self, obs):
         if not self.normalize_obs:
             return obs
         return jax.numpy.clip((obs - self.obs_rms_mean) / jax.numpy.sqrt(self.obs_rms_var + 1e-8), -10.0, 10.0)
+
+    def plot_and_save_trajectory_graphs(self):
+        try:
+            import matplotlib
+            matplotlib.use('Agg')  
+            import matplotlib.pyplot as plt
+            
+            fig, axs = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+            fig.suptitle(f'Траектория лучшего паука (Шаг обучения: {self.step})', fontsize=14, fontweight='bold')
+            
+            axs[0].plot(self.best_agent_heights, label='Высота корпуса (Z)', color='red', linewidth=2)
+            axs[0].axhline(y=0.15, color='green', linestyle='--', label='Идеальная высота (~0.15м)')
+            axs[0].axhline(y=0.08, color='black', linestyle=':', label='Порог смерти (0.08м)')
+            axs[0].set_ylabel('Высота Z (метры)')
+            axs[0].set_ylim(0.0, 0.4)
+            axs[0].grid(True, linestyle=':', alpha=0.6)
+            axs[0].legend(loc='upper right')
+            
+            axs[1].plot(self.best_agent_xs, label='Пройденное расстояние (X)', color='blue', linewidth=2)
+            axs[1].set_ylabel('Расстояние X (метры)')
+            axs[1].grid(True, linestyle=':', alpha=0.6)
+            axs[1].legend(loc='upper left')
+            
+            axs[2].plot(self.best_agent_ys, label='Отклонение вбок (Y)', color='purple', linewidth=2)
+            axs[2].axhline(y=0.0, color='black', linestyle='--', alpha=0.5, label='Центр коридора (Y=0)')
+            axs[2].set_ylabel('Смещение Y (метры)')
+            axs[2].set_xlabel('Шаги внутри эпизода')
+            axs[2].set_ylim(-1.0, 1.0)  
+            axs[2].grid(True, linestyle=':', alpha=0.6)
+            axs[2].legend(loc='upper left')
+            
+            plt.tight_layout()
+            
+            os.makedirs('plots', exist_ok=True)
+            plt.savefig('plots/height_trajectory_latest.png', dpi=150)
+            plt.close()
+            
+        except Exception as e:
+            logger.error(f"Ошибка при рисовании графиков траектории: {e}")

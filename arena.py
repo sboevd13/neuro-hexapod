@@ -1,291 +1,269 @@
-from collections import deque
-import time
-import jax
-from jax import vmap
-import mujoco
-from mujoco import mjx
+import argparse 
+from collections import deque 
+import time 
+import jax 
+from jax import vmap 
+import mujoco 
+from mujoco import mjx 
 from mujoco.mjx import Data
 
-import sys
-from jax import numpy as jp
-import threading
+import sys 
+from jax import numpy as jp 
+import threading 
 from queue import Queue
 
-    
-class BattleArena:
+class BattleArena: 
     def __init__(self) -> None:
-        self.model = mujoco.MjModel.from_xml_path("models/arena.xml") #_all_collisions
-        
+
+        self.model = mujoco.MjModel.from_xml_path("models/arena.xml")
         self.model.opt.solver = mujoco.mjtSolver.mjSOL_NEWTON
-        self.model.opt.integrator = mujoco.mjtIntegrator.mjINT_RK4
+        self.model.opt.integrator = mujoco.mjtIntegrator.mjINT_EULER
         self.model.opt.disableflags = mujoco.mjtDisableBit.mjDSBL_EULERDAMP
-        self.model.opt.iterations = 1 
+        self.model.opt.iterations = 4 
         self.model.opt.ls_iterations = 4
-        
+            
         self.q_function = None
         self.q_params = None
 
         self.data = mujoco.MjData(self.model)
         self.mjx_model = mjx.put_model(self.model)
-        
+            
         self.frame_skip = 5
-        
-        self.r_arena = 5
-        self.placement_radius = 1.3
-        self.placement_noise_scale = 0.02
-        self.placement_z = 0.9
-        self.placement_z_noise_std = 0.1
-        self.velocity_noise_scale = 0.1
-        
-        
-        self.agent_count = 2
-        self.observation_space_shape = (72+1, )
-        self.action_space_shape = (8,)
-        
+            
+        # --- ПАРАМЕТРЫ РОБОТА И ЦЕЛИ ИЗ PYBULLET ---
+        self.agent_count = 1  
+        obs_size = (self.mjx_model.nq - 2) + self.mjx_model.nv + self.mjx_model.nv
+        self.observation_space_shape = (obs_size,) 
+        self.action_space_shape = (self.mjx_model.nu,)
+
         self.ctrlrange_high = 1.0
         self.ctrlrange_low = -1.0
-        
-        
         self.max_steps = 1000
-        self.com_buffer_size = 2
-        
 
-    def reset(self, rng: jax.Array,):
-        data = mjx.make_data(self.mjx_model)
-        rng0, rng1, rng2, rng3, rng4, rng5, rng6, rng7, rng8 = jax.random.split(rng, 9)
+        # Целевая позиция из PyBullet окружения
+        self.target_position = jp.array([5.0, 0.0, 0.10])
+        # Начальное расстояние до цели (для нормирования ухода в сторону)
+        self.initial_dist = jp.sqrt(self.target_position[0]**2 + self.target_position[1]**2)
 
-        phi = jax.random.uniform(rng1, minval=0.0, maxval=2*jp.pi)
-        
-        pos0 = jp.array((jp.cos(phi), jp.sin(phi)))*self.placement_radius
-        pos1 = -pos0 + jp.clip(self.placement_noise_scale*jax.random.normal(rng2, (2, )), -0.05, 0.05) 
-        pos0 += jp.clip(self.placement_noise_scale*jax.random.normal(rng3, (2, )), -0.05, 0.05)
-        
-        z_noize = self.placement_z_noise_std * jp.clip(jax.random.normal(rng2, (1,)), -0.3, 0.3)
-        z_pos0 = self.placement_z + z_noize 
-        z_pos1 = self.placement_z + z_noize      
-        
-        quat0 = data.qpos[3:7]  
-        quat1 = data.qpos[18:22]  
+        # Вычисляем масштаб действий под радианы
+        self.action_scale = jp.array([jp.deg2rad(45.0), jp.deg2rad(45.0), jp.deg2rad(70.0)] * 6)
 
-        qpos = jp.concatenate([
-            pos0, z_pos0, quat0, data.qpos[7:15],
-            pos1, z_pos1, quat1, data.qpos[22:]
+        self.elbow_site_names = ["elbow_one", "elbow_two", "elbow_three", "elbow_four", "elbow_five", "elbow_six"]
+        self.elbow_site_ids = jp.array([
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, name)
+            for name in self.elbow_site_names
         ])
-        
-        low, hi = -self.velocity_noise_scale, self.velocity_noise_scale
+    
+    def reset(self, rng: jax.Array):
+        data = mjx.make_data(self.mjx_model)
+        rng_pos, rng_vel, rng_next = jax.random.split(rng, 3)
 
-        qvel = data.qvel + jax.random.uniform(rng5, (self.model.nv,), minval=low, maxval=hi)
+        qpos = data.qpos
+        # Ставим робота в начальную точку на высоту 0.2 (как INIT_POSITION в PyBullet)
+        qpos = qpos.at[0:3].set(jp.array([0.0, 0.0, 0.15]))
+            
+        # Инициализация моторов в диапазоне от -10 до +10 градусов (pi / 18)
+        num_joints = self.mjx_model.nu
+        joint_noise = jax.random.uniform(rng_pos, (num_joints,), minval=-jp.pi/18.0, maxval=jp.pi/18.0)
+        qpos = qpos.at[7:7+num_joints].set(joint_noise)
+
+        # Скорости
+        low, hi = -0.01, 0.01
+        qvel = jax.random.uniform(rng_vel, (self.mjx_model.nv,), minval=low, maxval=hi)
+            
         data = data.replace(qpos=qpos, qvel=qvel)
         data = mjx.forward(self.mjx_model, data)
-        
-        role = jax.random.randint(rng4, (2,), minval=0, maxval=2) # remnants of the old experiment, not used, for compatibility only
-        obs = self.get_obs(data, role)
-        
-        com0_buffer = jax.numpy.tile(data.subtree_com[1], (self.com_buffer_size, 1))
-        com1_buffer = jax.numpy.tile(data.subtree_com[14], (self.com_buffer_size, 1))
-        
-        return dict(data=data,
-                    step=0,
-                    obs=obs,
-                    rng=rng0, 
-                    com=(data.subtree_com[1], data.subtree_com[14]),
-                    role=role,
-                    com_buffer=(com0_buffer, com1_buffer),
-                    max_d_0=jp.zeros(1)[0],
-                    max_d_1=jp.zeros(1)[0],
-                    had_contact=jp.zeros(1)[0],
-                    dd0=jp.zeros(1)[0],
-                    dd1=jp.zeros(1)[0],
-                    )
-        
-    
-    def get_obs(self, data: Data, role):
-        return jp.concatenate((jp.expand_dims(role[0], 0),
-                                data.qpos[:15],
-                                data.qvel[:14], 
-                                data.qfrc_actuator[:14],
-
-                                data.qpos[15:],
-                                data.qvel[14:]
-                                )), \
-            jp.concatenate((jp.expand_dims(role[1], 0),
-                            data.qpos[15:],
-                            data.qvel[14:],
-                            data.qfrc_actuator[14:],
-
-                            data.qpos[:15],
-                            data.qvel[:14], 
-                            )) 
-        
-    
-    def compute_reward(self, old_data, new_data, had_contact0, had_contact, dd0, dd1):
-        fighter0_com = new_data.subtree_com[1]
-        fighter1_com = new_data.subtree_com[14]
-        fighter0_com_last = old_data.subtree_com[1]
-        fighter1_com_last = old_data.subtree_com[14]
-
-        r_vec0 = jp.sqrt(jp.sum(jp.square(fighter0_com)))
-        r_vec1 = jp.sqrt(jp.sum(jp.square(fighter1_com)))
-        
-        
-        
-        dir_vec01 = fighter1_com-fighter0_com_last
-        dir_vec_len = jp.sqrt(jp.sum(jp.square(dir_vec01)))
-        dir_vec01 = jp.where(dir_vec_len > 0, dir_vec01 / dir_vec_len, dir_vec01*0.0)
-        
-        dir_vec10 = fighter0_com-fighter1_com_last
-        dir_vec_len = jp.sqrt(jp.sum(jp.square(dir_vec10)))
-        dir_vec10 = jp.where(dir_vec_len > 0, dir_vec10 / dir_vec_len, dir_vec10*0.0)
-        
-        
-        movement_vec0 = fighter0_com - fighter0_com_last
-        movement_projection0 = jp.clip(jp.dot(movement_vec0, dir_vec01), -0.5, 0.5)
-        
-        movement_vec1 = fighter1_com - fighter1_com_last
-        movement_projection1 = jp.clip(jp.dot(movement_vec1, dir_vec10), -0.5, 0.5)
-        
-
-        pre_fell_to_the_hell0 = jp.where(fighter0_com[3] < 0.0 , 1.0, 0.0)
-        pre_fell_to_the_hell1 = jp.where(fighter1_com[3] < 0.0 , 1.0, 0.0)
-        
-    
-        k3 = 10.0
-        k4 = 3.0
-        
-        dd_reward0 = jp.clip(jp.where(r_vec0<r_vec1, dd1, 0.0), -0.5, 0.5)
-        dd_reward1 = jp.clip(jp.where(r_vec1<r_vec0, dd0, 0.0), -0.5, 0.5)
-        
-        
-        a0_reward = k4*movement_projection0 + k3*dd_reward0 
-        a1_reward = k4*movement_projection1 + k3*dd_reward1 
-        a0_reward = jp.where(had_contact0+had_contact==1.0, 0.5, a0_reward)
-        a1_reward = jp.where(had_contact0+had_contact==1.0, 0.5, a1_reward)
-        
-        
-        a0_reward = jp.where(pre_fell_to_the_hell0+pre_fell_to_the_hell1>0, 0.0, a0_reward)
-        a1_reward = jp.where(pre_fell_to_the_hell0+pre_fell_to_the_hell1>0, 0.0, a1_reward)
-        
-        k0 = -0.2
-        k1 = 0.2
-        a0_reward = jp.where(pre_fell_to_the_hell0 > 0, k0, jp.where(pre_fell_to_the_hell1 > 0, k1, a0_reward))
-        a1_reward = jp.where(pre_fell_to_the_hell1 > 0, k0, jp.where(pre_fell_to_the_hell0 > 0, k1, a1_reward))
-        
-        return a0_reward, a1_reward
-    
-
-    def validation_reward(self, fighter0_com, fighter1_com):
-        fell_to_the_hell0 = jp.where(fighter0_com[3] < 0.0 , 1.0, 0.0)
-        fell_to_the_hell1 = jp.where(fighter1_com[3] < 0.0 , 1.0, 0.0)
-        a0_reward = jp.where(fell_to_the_hell0<fell_to_the_hell1, 1.0, jp.where(fell_to_the_hell0>fell_to_the_hell1, -1.0, 0.0))
-        a1_reward = jp.where(fell_to_the_hell1<fell_to_the_hell0, 1.0, jp.where(fell_to_the_hell1>fell_to_the_hell0, -1.0, 0.0))
-        return a0_reward, a1_reward
-    
-    
-    def step(self, state0, control):
-        data, _ = jax.lax.scan(lambda d0, _: (mjx.step(self.mjx_model, d0.replace(ctrl=control)), None), state0['data'], (), self.frame_skip)
-        new_step = state0['step'] + 1
-        steps_limit_reached = jp.where(new_step >= self.max_steps, 1.0, 0.0)
-          
-        fighter0_com = data.subtree_com[1]
-        fighter1_com = data.subtree_com[14]
-        
-        com0_buffer, com1_buffer = state0['com_buffer']
-        com0_buffer = jp.concat((com0_buffer[1:], jp.expand_dims(fighter0_com, 0)))
-        com1_buffer = jp.concat((com1_buffer[1:], jp.expand_dims(fighter1_com, 0)))
-        
-        f0f1_distance = jp.sqrt(jp.sum(jp.square(fighter1_com[:2]-fighter0_com[:2])))
-        had_contact = jp.where(f0f1_distance<1.0, 1.0, state0['had_contact'])   
-        
-        distances0 = jp.sum(jp.square(com0_buffer[:, :2]), axis=-1)
-        max_d_0 = jp.where(had_contact, jp.maximum(state0['max_d_0'], jp.mean(jp.sqrt(distances0))), 0.0)
-        
-        distances1 = jp.sum(jp.square(com1_buffer[:, :2]), axis=-1)
-        max_d_1 = jp.where(had_contact, jp.maximum(state0['max_d_1'], jp.mean(jp.sqrt(distances1))), 0.0)
-        
-        dd0 = max_d_0 - state0['max_d_0']
-        dd1 = max_d_1 - state0['max_d_1']
-                
-        reward0, reward1 = self.compute_reward(state0['data'], data, state0['had_contact'], had_contact, dd0, dd1)
-        validation_r0, validation_r1 = self.validation_reward(fighter0_com, fighter1_com)
-        
-        # terminal rewards 
             
-        fell_to_hell_limit = -30.0
-        pre_fell_to_hell_limit = -1.5
-        fell_to_the_hell0 = jp.where(fighter0_com[3] < fell_to_hell_limit , 1.0, 0.0)
-        fell_to_the_hell1 = jp.where(fighter1_com[3] < fell_to_hell_limit , 1.0, 0.0)
-        pre_fell_to_the_hell0 = jp.where(fighter0_com[3] < pre_fell_to_hell_limit , 1.0, 0.0)
-        pre_fell_to_the_hell1 = jp.where(fighter1_com[3] < pre_fell_to_hell_limit , 1.0, 0.0)
-        
-        both_fell = fell_to_the_hell0*pre_fell_to_the_hell1 + fell_to_the_hell1*pre_fell_to_the_hell0
-        both_survived = (1-pre_fell_to_the_hell0)*(1-pre_fell_to_the_hell1)
-        
-        both_fell_reward = 0.0
-        both_survived_reward = -10.0
-        win_reward = 0.0
-        loose_reward = 0.0
-        
-        done = jp.where(steps_limit_reached + fell_to_the_hell0 + fell_to_the_hell1, 
-                        1.0, 
-                        0.0)
-        
-        finished_reward_0 = jp.where(both_fell>0, both_fell_reward, 
-                                     jp.where(both_survived>0, both_survived_reward,
-                                               jp.where(pre_fell_to_the_hell0>0, loose_reward, win_reward)))
-        finished_reward_1 = jp.where(both_fell>0, both_fell_reward, 
-                                     jp.where(both_survived>0, both_survived_reward,
-                                               jp.where(pre_fell_to_the_hell1>0, loose_reward, win_reward)))
-        
-        reward0 = jp.where(done > 0, finished_reward_0, reward0)
-        reward1 = jp.where(done > 0, finished_reward_1, reward1)
-        
-        observations = self.get_obs(data, state0['role'])
-        
-        new_state = dict(data=data, 
-                         step=new_step, 
-                         obs=observations, 
-                         rng=state0['rng'], 
-                         com=(fighter0_com, fighter1_com), 
-                         role=state0['role'],
-                         com_buffer=(com0_buffer, com1_buffer),
-                         max_d_0=max_d_0,
-                         max_d_1=max_d_1,
-                         had_contact=had_contact,
-                         dd0 = dd0,
-                         dd1 = dd1) 
-        next_state = jax.lax.cond(done, self.reset, lambda _ : new_state, new_state['rng'])
-        
-        return next_state, new_state["obs"], (jax.numpy.array([reward0]), jax.numpy.array([reward1])), jax.numpy.array([done]), (validation_r0, validation_r1)
+        obs = self.get_obs(data)
+        com_pos = data.subtree_com[1]
+            
+        return dict(
+            data=data,
+            step=0,
+            obs=obs,
+            rng=rng_next, 
+            last_com=com_pos, 
+        )
+    
+    def get_obs(self, data: Data):
+        obs = jp.concatenate((
+            data.qpos[2:],             
+            data.qvel,           
+            data.qfrc_actuator   
+        ))
+        return obs
 
+    def compute_reward(self, old_data, new_data):
+        dt = self.model.opt.timestep * self.frame_skip
+        curr_com = new_data.subtree_com[1] # Текущая позиция корпуса [x, y, z]
+
+        # Веса из PyBullet
+        w1 = 12.0  # Вес за приближение к цели
+        w2 = 0.4   # Вес за удержание высоты цели
+        w3 = 0.0   # Вес за энергозатраты
+        w4 = 0.4   # Вес за раскачивание корпуса (Roll/Pitch)
+        w5 = 15.0   # Вес штрафа за уход вбок по Y (НОВЫЙ)
+        w6 = 150.0 # Вес штрафа за касание локтями земли (настраивайте вручную)
+        w7 = 5.0  # Вес мгновенного (барьерного) штрафа за факт касания (НОВЫЙ)
+        w8 = 5.0 # Вес штрафа за поворот (можно настроить)
+            
+
+        old_com = old_data.subtree_com[1]
+        velocity_x = (curr_com[0] - old_com[0]) / dt
+        target_reward = w1 * velocity_x
+
+        # Штраф за движение по Y
+        y_position = curr_com[1] # Текущее положение робота на оси Y
+        sideways_penalty = w5 * (y_position ** 2) 
+
+
+        # 2. ШТРАФ ЗА ВЫСОТУ
+        height_penalty = w2 * jp.abs(curr_com[2] - self.target_position[2])
+
+        # 3. ПОТРЕБЛЕНИЕ ЭНЕРГИИ (активные суставы находятся начиная с индекса 6 в qvel/qfrc)
+        speeds = new_data.qvel[6:]
+        torques = new_data.qfrc_actuator[6:]
+        consumption = dt * jp.abs(jp.sum(speeds * torques))
+        power_penalty = w3 * consumption
+
+        # 4. РАСКАЧИВАНИЕ КОРПУСА (Конвертируем кватернион MJX в углы Roll/Pitch)
+        qw, qx, qy, qz = new_data.qpos[3], new_data.qpos[4], new_data.qpos[5], new_data.qpos[6]
+            
+        # Roll (угол крена)
+        sinr_cosp = 2.0 * (qw * qx + qy * qz)
+        cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+        roll = jp.arctan2(sinr_cosp, cosr_cosp)
+            
+        # Pitch (угол тангажа)
+        sinp = 2.0 * (qw * qy - qz * qx)
+        sinp = jp.clip(sinp, -0.999999, 0.999999) # избегаем NaN в arcsin
+        pitch = jp.arcsin(sinp)
+            
+        shaking_penalty = w4 * (jp.abs(roll) + jp.abs(pitch))
+            
+        # Барьерный штраф (НОВЫЙ): если хотя бы один локоть ниже порога, штрафуем сразу на w7
+        # 5. ШТРАФ ЗА КАСАНИЕ ЛОКТЯМИ ЗЕМЛИ (СТУПЕНЧАТЫЙ)
+        elbow_heights = new_data.site_xpos[self.elbow_site_ids, 2]
+        elbow_threshold = 0.028  # Порог высоты локтя (2.5 см)
+            
+        # Получаем булев массив (True там, где локоть ниже порога, False - где выше)
+        is_touching = (elbow_heights < elbow_threshold)
+            
+        # Суммируем количество коснувшихся ног (True превращается в 1, False в 0)
+        num_touching_legs = jp.sum(is_touching)
+            
+        # w7 — фиксированный штраф за ОДНУ коснувшуюся ногу. 
+        elbow_penalty = w7 * num_touching_legs
+
+        qw, qx, qy, qz = new_data.qpos[3], new_data.qpos[4], new_data.qpos[5], new_data.qpos[6]
+            
+        # Преобразование кватерниона в углы Эйлера (XYZ, как в MuJoCo)
+        # yaw (рысканье)
+        siny_cosp = 2.0 * (qw * qz + qx * qy)
+        cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+        yaw = jp.arctan2(siny_cosp, cosy_cosp)
+            
+        yaw_penalty = w8 * jp.abs(yaw)
+
+        # Итоговая награда
+        reward = target_reward - height_penalty - power_penalty - shaking_penalty - sideways_penalty - elbow_penalty - yaw_penalty
+        #reward *= 0.01
+
+        return reward
+
+
+    def validation_reward(self, old_com, new_com):
+        # Метрика прогресса к цели (на сколько метров продвинулся к точке)
+        old_dist = jp.sqrt((self.target_position[0] - old_com[0])**2 + (old_com[1] - self.target_position[1])**2)
+        new_dist = jp.sqrt((self.target_position[0] - new_com[0])**2 + (new_com[1] - self.target_position[1])**2)
+            
+        return old_dist - new_dist
+
+
+    def step(self, state0, control):
+        scaled_control = control * self.action_scale
+
+        # Интегрирование физики
+        data, _ = jax.lax.scan(
+            lambda d0, _: (mjx.step(self.mjx_model, d0.replace(ctrl=scaled_control)), None), 
+            state0['data'], (), self.frame_skip
+        )
+
+        new_step = state0['step'] + 1
+        steps_limit_reached = (new_step >= self.max_steps)
+        spider_com = data.subtree_com[1]
+
+        # Расчет награды
+        reward = self.compute_reward(state0['data'], data)
+
+        # Условия окончания из PyBullet (roll/pitch вне диапазона +- 30 градусов)
+        qw, qx, qy, qz = data.qpos[3], data.qpos[4], data.qpos[5], data.qpos[6]
+            
+        # Вычисление Roll/Pitch
+        sinr_cosp = 2.0 * (qw * qx + qy * qz)
+        cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+        roll = jp.arctan2(sinr_cosp, cosr_cosp)
+            
+        sinp = 2.0 * (qw * qy - qz * qx)
+        sinp = jp.clip(sinp, -0.999999, 0.999999)
+        pitch = jp.arcsin(sinp)
+            
+        # Булевы условия конца эпизода
+        limit_angle = jp.deg2rad(45.0) 
+        pitch_exceeded = (pitch > limit_angle) | (pitch < -limit_angle)
+        roll_exceeded = (roll > limit_angle) | (roll < -limit_angle)
+
+        fell_or_collapsed = (spider_com[2] < 0.03)
+            
+            
+        # Слишком далеко от цели (расстояние выросло более чем в 2 раза от изначального)
+        curr_dist = jp.sqrt((self.target_position[0] - spider_com[0])**2 + (spider_com[1] - self.target_position[1])**2)
+        too_far = (curr_dist > 2.0 * self.initial_dist)
+
+        done = jp.where(steps_limit_reached | fell_or_collapsed | pitch_exceeded | roll_exceeded | too_far, 1.0, 0.0)
+
+        # Метрика прогресса для валидации
+        val_reward = self.validation_reward(state0['last_com'], spider_com)
+
+        observations = self.get_obs(data)
+        new_state = dict(
+            data=data, 
+            step=new_step, 
+            obs=observations, 
+            rng=state0['rng'], 
+            last_com=spider_com
+        ) 
+
+        next_state = jax.lax.cond(done > 0.5, self.reset, lambda _ : new_state, new_state['rng'])
+
+        return (
+            next_state, 
+            observations, 
+            jp.array([reward]).reshape(-1), 
+            jp.array([done]).reshape(-1), 
+            val_reward
+        )
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Battle Arena for RL agents')
+    parser = argparse.ArgumentParser(description='Spider Rescue Mission Simulation')
     
-    # Agent paths
-    parser.add_argument('--agent0', type=str, default=None,
-                        help='Path to agent 0 (default: agent.flax in root or eternal-firefly-57 if no agent.flax found)')
-    parser.add_argument('--agent1', type=str, default='legacy-agents/eternal-firefly-57/agent.flax',
-                        help='Path to agent 1 (default: eternal-firefly-57)')
+    parser.add_argument('--agent', type=str, default=None,
+                        help='Path to agent .flax file (default: agent.flax in root)')
     
-    # Normalization values
-    parser.add_argument('--norm0', type=str, default='obs-norm/obs_norm_legacy.npz',
-                        help='Path to normalization values for agent 0')
-    parser.add_argument('--norm1', type=str, default='obs-norm/obs_norm_legacy.npz',
-                        help='Path to normalization values for agent 1')
+    parser.add_argument('--norm', type=str, default='obs-norm/obs_norm_last.npz',
+                        help='Path to normalization values (.npz)')
     
-    # Saving options
     parser.add_argument('--save-mode', type=str, choices=['none', 'images', 'positions', 'both'],
                         default='none', help='What data to save')
     
     args = parser.parse_args()
     
-    # If agent0 is not specified, try to use agent.flax from root, else use eternal-firefly-57
-    if args.agent0 is None:
+    if args.agent is None:
         if os.path.exists('agent.flax'):
-            args.agent0 = 'agent.flax'
+            args.agent = 'agent.flax'
         else:
-            args.agent0 = 'legacy-agents/eternal-firefly-57/agent.flax'
+            print("Warning: No agent file found, will use random actions or wait for input.")
     
     return args
 
@@ -316,51 +294,65 @@ def save_images(queue):
             plt.imsave(f"outputs/images/{frame:05d}.png", pixels)
         
         
+@jax.jit            
 def normalize_obs(obs, obs_rms_mean, obs_rms_var):
     return jax.numpy.clip((obs - obs_rms_mean) / jax.numpy.sqrt(obs_rms_var + 1e-8), -10.0, 10.0)
             
             
 def main():
     args = parse_args()
-    
-    # Print starting parameters
-    print("Starting Battle Arena with parameters:")
-    print(f"Agent 0: {args.agent0}")
-    print(f"Agent 1: {args.agent1}")
-    print(f"Normalization 0: {args.norm0}")
-    print(f"Normalization 1: {args.norm1}")
+
+    print("Starting Spider Rescue Mission with parameters:")
+    print(f"Agent: {args.agent}")
+    print(f"Normalization: {args.norm}")
     print(f"Save mode: {args.save_mode}")
 
-    # check if everything works ok with batches
     ba = BattleArena()
+
     batch_size = 64
     key = jax.random.split(jax.random.key(42), batch_size)
     batched_state = vmap(ba.reset)(key)
-    print('batch qpos shape', batched_state['data'].qpos.shape)
+    obs_shape = batched_state['obs'].shape[-1] 
+    print('Batch observation shape:', batched_state['obs'].shape) 
 
-    agent1 = ActorSimple_skip(ba.action_space_shape[0], 
-                    ba.ctrlrange_high, ba.ctrlrange_low,
-                    512, 512) 
-    agent0 = ActorSimple_skip(ba.action_space_shape[0], 
-                    ba.ctrlrange_high, ba.ctrlrange_low,
-                    512, 512) 
-    
-    # Load agents
-    with open(args.agent0, 'rb') as f:
-        agent_0_bytes = f.read()
-    with open(args.agent1, 'rb') as f:
-        agent_1_bytes = f.read()
-    
-    # Load normalization values
-    obs_norm_values = np.load(args.norm0)
-    obs_rms_mean0 = jax.numpy.array(obs_norm_values['obs_mean'])
-    obs_rms_var0 = jax.numpy.array(obs_norm_values['obs_var'])
-    
-    obs_norm_values = np.load(args.norm1)
-    obs_rms_mean1 = jax.numpy.array(obs_norm_values['obs_mean'])
-    obs_rms_var1 = jax.numpy.array(obs_norm_values['obs_var'])
-    
-    # Initialize image saving only if needed
+    agent = ActorSimple_skip(
+        ba.action_space_shape[0], 
+        ba.ctrlrange_high, ba.ctrlrange_low,
+        512, 512
+    ) 
+
+    from flax import serialization
+    init_key = jax.random.key(0)
+    dummy_obs = batched_state['obs'][0:1] 
+
+    if args.agent and os.path.exists(args.agent):
+        with open(args.agent, 'rb') as f:
+            agent_bytes = f.read()
+        agent_params = serialization.from_bytes(
+            agent.init(init_key, dummy_obs)['params'], 
+            agent_bytes
+        )
+        agent_params = jax.device_put(agent_params)
+        print("Agent loaded from file.")
+    else:
+        agent_params = agent.init(init_key, dummy_obs)['params']
+        print("Using RANDOM weights.")
+
+    obs_shape = batched_state['obs'].shape[-1]
+
+    obs_rms_mean = jp.zeros(obs_shape)
+    obs_rms_var = jp.ones(obs_shape)
+    if os.path.exists(args.norm):
+        obs_norm_values = np.load(args.norm)
+        if len(obs_norm_values['obs_mean']) == obs_shape:
+            obs_rms_mean = jax.numpy.array(obs_norm_values['obs_mean'])
+            obs_rms_var = jax.numpy.array(obs_norm_values['obs_var'])
+            print("-> Normalization loaded.")
+        else:
+            print(f"-> Norm shape mismatch! Expected {obs_shape}. Using default.")
+    else:
+        print("-> Using default normalization.")
+
     image_queue = None
     image_saver_thread = None
     if args.save_mode != 'none':
@@ -370,159 +362,120 @@ def main():
         image_queue = Queue()
         image_saver_thread = threading.Thread(target=save_images, args=(image_queue,))
         image_saver_thread.start()
-    
-    inference_key, env_key, init_key = jax.random.split(jax.random.key(42), 3)
+
+    inference_key, env_key = jax.random.split(jax.random.key(42), 2)
     
     jit_reset = jax.jit(ba.reset)
+    jit_step = jax.jit(ba.step)
     
+    jit_get_action = jax.jit(agent.get_action)
+
     state = jit_reset(env_key)
-                        
-    agent_0_params = serialization.from_bytes(agent0.init(init_key, batched_state['obs'][0])['params'], agent_0_bytes)
-    agent_1_params = serialization.from_bytes(agent1.init(init_key,  batched_state['obs'][1])['params'], agent_1_bytes)
-    
-    width = 1280
-    height = 720
-    
+
+    width, height = 1280, 720
     ba.model.vis.global_.offwidth = width
     ba.model.vis.global_.offheight = height
     renderer = mujoco.Renderer(ba.model, width=width, height=height)
+
     camera = mujoco.MjvCamera()
-    camera_id = mujoco.mj_name2id(ba.model, mujoco.mjtObj.mjOBJ_CAMERA, 'free_cam', )
-    camera.fixedcamid = camera_id
-    camera.type = 2
-    camera.trackbodyid = 0
-    
-    jit_step = jax.jit(ba.step)
+    camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+    camera.trackbodyid = 1 
+    camera.distance = 2.5 
 
     pygame.init()
     screen = pygame.display.set_mode((width, height))
-    pygame.display.set_caption(f"{args.agent0} vs {args.agent1}")
+    pygame.display.set_caption(f"Spider Rescue: {args.agent}")
     clock = pygame.time.Clock()
     keymap = {pygame.K_ESCAPE: 0.0, pygame.K_SPACE: 0.0}
 
-    rewards0 = deque([0.0]*1000, maxlen=1000)
-    rewards1 = deque([0.0]*1000, maxlen=1000)
+    rewards_history = deque([0.0]*1000, maxlen=1000)
     frame = 0
+    # =======================================================
+    # БЛОК ВЫГРУЗКИ ДАННЫХ ДЛЯ ТЕСТИРОВАНИЯ В EXCEL
+    # =======================================================
+    print("\n" + "="*40)
+    print("ВЫГРУЗКА ДАННЫХ ДЛЯ EXCEL (МОТОР 1)")
     
+    test_obs = jp.expand_dims(state['obs'], 0)
+    test_obs_norm = normalize_obs(test_obs, obs_rms_mean, obs_rms_var)
+    test_key = jax.random.key(777) 
+    
+    mean, log_std = agent.apply({'params': agent_params}, test_obs_norm)
+    
+    std = jp.exp(log_std)
+    noise = jax.random.normal(test_key, shape=mean.shape)
+    x_t = mean + std * noise
+    
+    action_scale = (ba.ctrlrange_high - ba.ctrlrange_low) / 2.0
+    
+    normal_log_prob = -0.5 * (((x_t - mean) / std) ** 2 + 2 * log_std + jp.log(2 * jp.pi))
+    log_tanh_deriv = 2.0 * (jp.log(2.0) - x_t - jax.nn.softplus(-2.0 * x_t))
+    single_log_prob = normal_log_prob - (jp.log(action_scale) + log_tanh_deriv)
+    
+    print(f"Mean      (M): {float(mean[0, 0]):.6f}")
+    print(f"Log_Std   (L): {float(log_std[0, 0]):.6f}")
+    print(f"Noise     (E): {float(noise[0, 0]):.6f}")
+    print(f"Итог Log_Prob: {float(single_log_prob[0, 0]):.6f}")
+    print("="*40 + "\n")
+    # =======================================================
+
     while True:
-        wheel = 0
         for event in pygame.event.get():
-                if event.type == QUIT:
-                    finish(image_queue, image_saver_thread)
-                if event.type == pygame.KEYDOWN:
-                    keymap[event.key] = 1.0
-                if event.type == pygame.KEYUP:
-                    keymap[event.key] = 0.0
-                if event.type == pygame.MOUSEWHEEL:
-                    wheel = event.y
+            if event.type == QUIT:
+                finish(image_queue, image_saver_thread)
+            if event.type == pygame.KEYDOWN:
+                keymap[event.key] = 1.0
+            if event.type == pygame.KEYUP:
+                keymap[event.key] = 0.0
 
         if keymap[pygame.K_ESCAPE] > 0.0:
             finish(image_queue, image_saver_thread)
-        
+
         if keymap[pygame.K_SPACE] > 0.0:
             state = jit_reset(jax.random.key(time.time_ns()))
-            
+
         mjx.get_data_into(ba.data, ba.model, state['data'])
         mujoco.mj_forward(ba.model, ba.data)
         renderer.update_scene(ba.data, camera=camera)
         pixels = renderer.render()
-        
+
         if image_queue is not None:
-            if args.save_mode == 'images' or args.save_mode == 'both':
-                pixels_to_save = pixels
-            else:
-                pixels_to_save = None
-                
-            if args.save_mode == 'positions' or args.save_mode == 'both':
-                xpos_to_save = ba.data.xpos
-                xmat_to_save = ba.data.xmat
-            else:
-                xpos_to_save = None
-                xmat_to_save = None
-                
-            image_queue.put((frame, pixels_to_save, xpos_to_save, xmat_to_save))
-        
-        pixels = np.swapaxes(pixels, 0, 1)
-        pix_surf = pygame.surfarray.make_surface(pixels)
-    
-        screen.blit(pix_surf, (0, 0))
+            px = pixels if args.save_mode in ['images', 'both'] else None
+            xp = ba.data.xpos if args.save_mode in ['positions', 'both'] else None
+            xm = ba.data.xmat if args.save_mode in ['positions', 'both'] else None
+            image_queue.put((frame, px, xp, xm))
+
+        pixels_surf = np.swapaxes(pixels, 0, 1)
+        screen.blit(pygame.surfarray.make_surface(pixels_surf), (0, 0))
 
         scale = 40
-        r = 0.25
-        com0, com1 = state['com']
-        com0 = com0*scale
-        com1 = com1*scale
-        cx = 1080
-        cy = 600
-        arena_hwidth = 2.5
-        arena_hheight = 2.5
+        cx, cy = 1080, 600
+        spider_pos = state['last_com']
+
+        pygame.draw.rect(screen, (0, 255, 0), (cx-100, cy-100, 200, 200), 2)
+        pygame.draw.circle(screen, (255, 0, 0), (int(cx + spider_pos[0]*scale), int(cy - spider_pos[1]*scale)), 8)
+
+        inf_key, inference_key = jax.random.split(inference_key)
+
+        obs_batched = jp.expand_dims(state['obs'], 0)
         
-        pygame.draw.rect(screen, 
-                         (0, 255,0),
-                         (cx-scale*arena_hwidth, cy-scale*arena_hheight, scale*2*arena_hwidth, scale*2*arena_hheight),
-                         2)
-        pygame.draw.circle(screen, 
-                           (255,0,0),
-                           (int(cx+com0[0]), int(cy-com0[1])),
-                            r*scale)
-        pygame.draw.circle(screen, 
-                           (0,0,255),
-                           (int(cx+com1[0]), int(cy-com1[1])),
-                           r*scale)
-        if state['had_contact'] > 0:
-            pygame.draw.circle(screen, 
-                           (255,0,0),
-                           (int(cx), int(cy)),
-                           int(state['max_d_0']*scale),
-                           1)
-            
-            pygame.draw.circle(screen, 
-                           (0,0,255),
-                           (int(cx), int(cy)),
-                           int(state['max_d_1']*scale),
-                           1)
-            
-        y_coord = 150 - 70*np.array(rewards0) 
-        x_coord = 140 + np.arange(1000)
-        reward_points = np.stack([x_coord, y_coord])
-        pygame.draw.lines(screen,
-                          (255, 0, 0),
-                          False,
-                          reward_points.T,
-                          2
-                          ) 
-        
-        y_coord = 150 - 70*np.array(rewards1) 
-        reward_points = np.stack([x_coord, y_coord])
-        pygame.draw.lines(screen,
-                          (0, 0, 255),
-                          False,
-                          reward_points.T,
-                          2)
-            
-        
-        key0, key1, inference_key = jax.random.split(inference_key, 3)
-        batched_obs = jp.expand_dims(state['obs'][0], 0)
-        
-        action, _, _ = agent0.get_action(agent_0_params, normalize_obs(batched_obs, obs_rms_mean0, obs_rms_var0), key0)
-        action1, _, _ = agent1.get_action(agent_1_params, normalize_obs(state['obs'][1], obs_rms_mean1, obs_rms_var1), key1)  
-   
-        actions = jax.numpy.concat([
-            jp.squeeze(action),
-            action1
-        ])
-    
-        state, _, rewards, _, validation_rewards = jit_step(state, actions)
-        
+        obs_norm = normalize_obs(obs_batched, obs_rms_mean, obs_rms_var)
+
+        _, _, action = jit_get_action(agent_params, obs_norm, inf_key)
+
+        state, _, reward, done, val_dist = jit_step(state, jp.squeeze(action))
+
         pygame.display.flip()
-        rewards0.append(rewards[0].item())
-        rewards1.append(rewards[1].item())
         
-        print(state['step'], validation_rewards[0], validation_rewards[1], rewards[0], rewards[1], clock.get_fps())
-       
-        clock.tick(50)
-        frame += 1            
-        
+        reward_val = float(reward[0])
+        rewards_history.append(reward_val)
+
+        if frame % 20 == 0:
+            print(f"Step: {state['step']} | Rew: {reward_val:.4f} | Dist: {val_dist:.2f} | FPS: {clock.get_fps():.1f}")
+    
+        clock.tick(50) 
+        frame += 1
+
 if __name__ == "__main__":
     from matplotlib import pyplot as plt
     from flax import serialization
@@ -531,7 +484,6 @@ if __name__ == "__main__":
     from flax import serialization
     from agent import ActorSimple_skip
     import numpy as np
-    
     import argparse
     import os
     import sys
@@ -540,4 +492,3 @@ if __name__ == "__main__":
     from queue import Queue
     from collections import deque
     main()
-

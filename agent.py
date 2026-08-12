@@ -53,14 +53,19 @@ class ActorSimple_skip(nn.Module):
     
 
 if __name__ == "__main__":
-    observation_size = 73  
-    action_size = 8      
+    observation_size = 73
+    action_size = 18   
     batch_size = 7
     
     agent_rng_key, init_key = jax.random.split(jax.random.PRNGKey(0))
 
-    model = ActorSimple_skip(action_space_size=action_size, action_space_high=1.0, 
-                        action_space_low=-1.0, hidden1_size=256, hidden2_size=256)
+    model = ActorSimple_skip(
+        action_space_size=action_size, 
+        action_space_high=1.0, 
+        action_space_low=-1.0, 
+        actor_fc1_size=512, 
+        actor_fc2_size=512
+    )
     
     # Dummy input for shape inference
     dummy_x = jnp.ones((batch_size, observation_size))  
