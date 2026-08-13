@@ -76,9 +76,16 @@ These calibration values describe the real servo installation. They are not bake
 
 ## Files in this branch
 
-- `models/arena.xml` — simplified MuJoCo rigid-body model matched to the real robot's kinematic dimensions, leg mounting points and 50 Hz control period.
+- `models/arena.xml` — MuJoCo rigid-body model matched to the real robot's kinematic dimensions, leg mounting points and 50 Hz control period.
 - `arena_real.py` — real-robot reset pose and viewer wrapper.
 - `sac_real.py` — training entry point that reuses the existing SAC implementation with the real-robot environment.
+- `real_robot_model.py` — generates a lightweight visual version of `models/arena.xml`. Its body outline is taken from the real printable Body Top/Bottom STL hull; visual parts are separated from collision/inertia using MuJoCo geom groups so appearance does not change the physics. Leg visuals are intentionally low-poly because WSL rendering was measured as the viewer bottleneck.
+
+Generate the visual model after pulling this branch:
+
+```bash
+python real_robot_model.py
+```
 
 Viewer example:
 
