@@ -1,342 +1,189 @@
-<mujoco model="hexapod_robot_sw_matched_meshes_rad">
-  <!-- Вся симуляция, включая euler, теперь строго в радианах -->
-  <compiler angle="radian" coordinate="local" eulerseq="XYZ" meshdir="meshes/" inertiafromgeom="false"/>
-  
-  <option timestep="0.00416" iterations="50" tolerance="1e-10" solver="Newton" jacobian="sparse"/>
+<mujoco model="educate_center_hexapod">
+  <compiler angle="radian" coordinate="local" inertiafromgeom="true"/>
+  <!-- Firmware uses a 20 ms (50 Hz) control frame. arena.py uses frame_skip=5,
+       therefore 4 ms physics steps produce one policy action every 20 ms. -->
+  <option timestep="0.004" iterations="50" tolerance="1e-10" solver="Newton" jacobian="sparse" gravity="0 0 -9.81"/>
 
   <default>
-    <!-- stiffness="0" дает моторам работать без сопротивления пружин -->
-    <joint armature="0.01" damping="0.3" stiffness="0" limited="true"/>
-    <geom contype="1" conaffinity="2" condim="3" density="1000" 
-          friction="2.0 0.1 0.1" 
-          solref="0.005 1" 
-          solimp="0.9 0.99 0.001"/>
+    <joint armature="0.002" damping="0.08" stiffness="0" limited="true"/>
+    <geom contype="1" conaffinity="2" condim="3" friction="1.4 0.08 0.02"
+          solref="0.006 1" solimp="0.9 0.99 0.001"/>
   </default>
-  
+
   <asset>
     <texture builtin="gradient" height="100" rgb1=".4 .5 .6" rgb2="0 0 0" type="skybox" width="100"/>
-    <texture builtin="checker" height="100" name="texplane" rgb1="0 0 0" rgb2="0.8 0.8 0.8" type="2d" width="100"/>
-    <material name="m_arena" reflectance="0.5" texture="texplane"/>
-
-    <!-- РЕГИСТРАЦИЯ STL СЕТОК РОБОТА -->
-    <mesh name="Hexapod_Body" file="Hexapod_Body.STL"/>
-    
-    <!-- Leg 1 Meshes -->
-    <mesh name="Leg_One_Motor_One" file="Leg_One_Motor_One.STL"/>
-    <mesh name="Leg_One_Joint_One" file="Leg_One_Joint_One.STL"/>
-    <mesh name="Leg_One_Motor_Two" file="Leg_One_Motor_Two.STL"/>
-    <mesh name="Leg_One_Joint_Two" file="Leg_One_Joint_Two.STL"/>
-    <mesh name="Leg_One_Motor_Three" file="Leg_One_Motor_Three.STL"/>
-    <mesh name="Leg_One_Foot" file="Leg_One_Foot.STL"/>
-
-    <!-- Leg 2 Meshes -->
-    <mesh name="Leg_Two_Motor_One" file="Leg_Two_Motor_One.STL"/>
-    <mesh name="Leg_Two_Joint_One" file="Leg_Two_Joint_One.STL"/>
-    <mesh name="Leg_Two_Motor_Two" file="Leg_Two_Motor_Two.STL"/>
-    <mesh name="Leg_Two_Joint_Two" file="Leg_Two_Joint_Two.STL"/>
-    <mesh name="Leg_Two_Motor_Three" file="Leg_Two_Motor_Three.STL"/>
-    <mesh name="Leg_Two_Foot" file="Leg_Two_Foot.STL"/>
-
-    <!-- Leg 3 Meshes -->
-    <mesh name="Leg_Three_Motor_One" file="Leg_Three_Motor_One.STL"/>
-    <mesh name="Leg_Three_Joint_One" file="Leg_Three_Joint_One.STL"/>
-    <mesh name="Leg_Three_Motor_Two" file="Leg_Three_Motor_Two.STL"/>
-    <mesh name="Leg_Three_Joint_Two" file="Leg_Three_Joint_Two.STL"/>
-    <mesh name="Leg_Three_Motor_Three" file="Leg_Three_Motor_Three.STL"/>
-    <mesh name="Leg_Three_Foot" file="Leg_Three_Foot.STL"/>
-
-    <!-- Leg 4 Meshes -->
-    <mesh name="Leg_Four_Motor_One" file="Leg_Four_Motor_One.STL"/>
-    <mesh name="Leg_Four_Joint_One" file="Leg_Four_Joint_One.STL"/>
-    <mesh name="Leg_Four_Motor_Two" file="Leg_Four_Motor_Two.STL"/>
-    <mesh name="Leg_Four_Joint_Two" file="Leg_Four_Joint_Two.STL"/>
-    <mesh name="Leg_Four_Motor_Three" file="Leg_Four_Motor_Three.STL"/>
-    <mesh name="Leg_Four_Foot" file="Leg_Four_Foot.STL"/>
-
-    <!-- Leg 5 Meshes -->
-    <mesh name="Leg_Five_Motor_One" file="Leg_Five_Motor_One.STL"/>
-    <mesh name="Leg_Five_Joint_One" file="Leg_Five_Joint_One.STL"/>
-    <mesh name="Leg_Five_Motor_Two" file="Leg_Five_Motor_Two.STL"/>
-    <mesh name="Leg_Five_Joint_Two" file="Leg_Five_Joint_Two.STL"/>
-    <mesh name="Leg_Five_Motor_Three" file="Leg_Five_Motor_Three.STL"/>
-    <mesh name="Leg_Five_Foot" file="Leg_Five_Foot.STL"/>
-
-    <!-- Leg 6 Meshes -->
-    <mesh name="Leg_Six_Motor_One" file="Leg_Six_Motor_One.STL"/>
-    <mesh name="Leg_Six_Joint_One" file="Leg_Six_Joint_One.STL"/>
-    <mesh name="Leg_Six_Motor_Two" file="Leg_Six_Motor_Two.STL"/>
-    <mesh name="Leg_Six_Joint_Two" file="Leg_Six_Joint_Two.STL"/>
-    <mesh name="Leg_Six_Motor_Three" file="Leg_Six_Motor_Three.STL"/>
-    <mesh name="Leg_Six_Foot" file="Leg_Six_Foot.STL"/>
+    <texture builtin="checker" height="100" name="texplane" rgb1="0.15 0.15 0.15" rgb2="0.75 0.75 0.75" type="2d" width="100"/>
+    <material name="m_arena" reflectance="0.2" texture="texplane"/>
   </asset>
 
   <worldbody>
     <light diffuse="1 1 1" dir="0 0 -1" directional="true" pos="0 0 2.5"/>
-    <geom material="m_arena" name="floor" pos="0 0 0" size="20 20 0.05" type="plane" 
-          contype="2" conaffinity="1" 
-          friction="2.0 0.1 0.1" 
-          solref="0.005 1" 
-          solimp="0.9 0.99 0.001"/>
+    <geom material="m_arena" name="floor" pos="0 0 0" size="20 20 0.05" type="plane"
+          contype="2" conaffinity="1" friction="1.4 0.08 0.02"/>
 
-    <!-- КОРПУС РОБОТА -->
-    <body name="Hexapod_Body" pos="0 0 0.15">
-      <camera name="track" mode="trackcom" pos="0 -1.5 1.5" xyaxes="1 0 0 0 0.7 0.7"/>
+    <!--
+      Coordinate convention:
+        MuJoCo +X = robot forward (firmware +X)
+        MuJoCo +Y = robot left    (firmware -Y)
+        MuJoCo +Z = up
+
+      Real-robot constants from educate-center/hexapod firmware:
+        BODY_X = [110.4, 0, -110.4, -110.4, 0, 110.4] mm
+        BODY_Y = [ 58.4,90.8, 58.4, -58.4,-90.8,-58.4] mm
+        COXA=51 mm, FEMUR=65 mm, TIBIA=121 mm
+        HOME_Z=-80 mm
+
+      Leg/action order is deliberately identical to firmware:
+        One=FR, Two=MR, Three=BR, Four=BL, Five=ML, Six=FL.
+    -->
+    <body name="Hexapod_Body" pos="0 0 0.082">
+      <camera name="track" mode="trackcom" pos="-0.8 -1.3 0.7" xyaxes="1 0 0 0 0.7 0.7"/>
       <joint name="root" type="free" limited="false" armature="0" damping="0"/>
-      
-      <inertial pos="0.000467 0.000481 -0.022293" mass="0.252992" diaginertia="0.0003353 0.0003312 0.0006622"/>
-      <geom type="mesh" mesh="Hexapod_Body" rgba="0.8 0.1 0.1 1"/>
 
-      <!-- ==================== LEG ONE ==================== -->
-      <body name="Leg_One_Motor_One" pos="0.0431 0.074825 -0.035" euler="1.570796 0 -2.094395">
-        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-        <geom type="mesh" mesh="Leg_One_Motor_One" rgba="0.3 0.3 0.3 1"/>
-        
-        <body name="Leg_One_Joint_One" pos="-0.0135 0.037 0" euler="3.141593 0 1.570796">
-          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
-          <joint name="Motor_One_Joint_One" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
-          <geom type="mesh" mesh="Leg_One_Joint_One" rgba="0.7 0.7 0.7 1"/>
+      <!-- Approximate body/electronics/battery mass. Link masses below include MG996R servos. -->
+      <geom name="body_main" type="box" size="0.115 0.095 0.012" pos="0 0 0.012" mass="0.45" rgba="0.75 0.12 0.12 1"/>
 
-          <body name="Leg_One_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.570796 0 -1.570796">
-            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-            <joint name="Joint_One_Motor_One" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
-            <geom type="mesh" mesh="Leg_One_Motor_Two" rgba="0.3 0.3 0.3 1"/>
-
-            <body name="Leg_One_Joint_Two" pos="0.0505 -0.042 0" euler="3.141593 0 -1.570796">
-              <inertial pos="-0.025268 -0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
-              <geom type="mesh" mesh="Leg_One_Joint_Two" rgba="0.7 0.7 0.7 1"/>
-
-              <body name="Leg_One_Motor_Three" pos="0 -0.0175 0" euler="0 0 -1.570796">
-                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-                <joint name="Joint_Two_Motor_One" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
-                <geom type="mesh" mesh="Leg_One_Motor_Three" rgba="0.3 0.3 0.3 1"/>
-
-                <body name="Leg_One_Foot" pos="0.0415 -0.021 -0.0125" euler="-1.570796 0 1.570796">
-                  <inertial pos="0.00007 -0.038827 0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
-                  <geom type="mesh" mesh="Leg_One_Foot" rgba="0.7 0.7 0.7 1"/>
-                  <site name="elbow_one" pos="-0.001 -0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
-                  <site name="tibia_one_tip" pos="0 -0.0388 0.007" size="0.01"/>
-                </body>
-              </body>
-            </body>
+      <!-- FR / leg 0: pivot (+110.4, -58.4) mm, neutral radial yaw -45 deg -->
+      <body name="Leg_One_Motor_One" pos="0.1104 -0.0584 0" euler="0 0 -0.7853981634">
+        <joint name="Motor_One_Joint_One" type="hinge" axis="0 0 1" range="-0.7853981634 0.7853981634"/>
+        <geom type="box" size="0.020 0.014 0.020" pos="0 0 0" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+        <geom type="capsule" fromto="0 0 0 0.051 0 0" size="0.010" mass="0.020" rgba="0.55 0.55 0.55 1"/>
+        <body name="Leg_One_Motor_Two" pos="0.051 0 0" euler="0 -0.666718034 0">
+          <joint name="Joint_One_Motor_One" type="hinge" axis="0 1 0" range="-0.7853981634 0.7853981634"/>
+          <geom type="box" size="0.020 0.014 0.020" pos="0 0 0" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+          <geom type="capsule" fromto="0 0 0 0.065 0 0" size="0.009" mass="0.025" rgba="0.65 0.65 0.65 1"/>
+          <body name="Leg_One_Motor_Three" pos="0.065 0 0" euler="0 2.122223468 0">
+            <joint name="Joint_Two_Motor_One" type="hinge" axis="0 1 0" range="-1.221730476 1.221730476"/>
+            <geom type="box" size="0.020 0.014 0.020" pos="0 0 0" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+            <geom type="capsule" fromto="0 0 0 0.121 0 0" size="0.008" mass="0.040" rgba="0.7 0.7 0.7 1"/>
+            <geom type="sphere" pos="0.121 0 0" size="0.012" mass="0.005" friction="1.8 0.08 0.02" rgba="0.12 0.12 0.12 1"/>
+            <site name="elbow_one" pos="0 0 0" size="0.009" rgba="1 0 0 0.5" type="sphere"/>
+            <site name="tibia_one_tip" pos="0.121 0 0" size="0.007"/>
           </body>
         </body>
       </body>
 
-      <!-- ==================== LEG TWO ==================== -->
-      <body name="Leg_Two_Motor_One" pos="0.08625 0.000087 -0.035" euler="1.570796 0 3.141593">
-        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-        <geom type="mesh" mesh="Leg_Two_Motor_One" rgba="0.3 0.3 0.3 1"/>
-
-        <body name="Leg_Two_Joint_One" pos="-0.0135 0.037 0" euler="3.141593 0 1.570796">
-          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
-          <joint name="Motor_One_Joint_Two" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
-          <geom type="mesh" mesh="Leg_Two_Joint_One" rgba="0.7 0.7 0.7 1"/>
-
-          <body name="Leg_Two_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.570796 0 -1.570796">
-            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-            <joint name="Joint_One_Motor_Two" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
-            <geom type="mesh" mesh="Leg_Two_Motor_Two" rgba="0.3 0.3 0.3 1"/>
-
-            <body name="Leg_Two_Joint_Two" pos="0.0505 0 0" euler="-3.141593 0 1.570796">
-              <inertial pos="-0.016732 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
-              <geom type="mesh" mesh="Leg_Two_Joint_Two" rgba="0.7 0.7 0.7 1"/>
-
-              <body name="Leg_Two_Motor_Three" pos="-0.042 0.0175 0" euler="0 0 1.570796">
-                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-                <joint name="Joint_Two_Motor_Two" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
-                <geom type="mesh" mesh="Leg_Two_Motor_Three" rgba="0.3 0.3 0.3 1"/>
-
-                <body name="Leg_Two_Foot" pos="0.0415 -0.0265 0.0115" euler="-1.5708 0 1.5708">
-                  <inertial pos="0.005570 -0.014827 0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
-                  <geom type="mesh" mesh="Leg_Two_Foot" rgba="0.7 0.7 0.7 1"/>
-                  <site name="elbow_two" pos="0.005 0.005 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
-                  <site name="tibia_two_tip" pos="0.005 -0.0148 0.007" size="0.01"/>
-                </body>
-              </body>
-            </body>
+      <!-- MR / leg 1: pivot (0, -90.8) mm, neutral radial yaw -90 deg -->
+      <body name="Leg_Two_Motor_One" pos="0 -0.0908 0" euler="0 0 -1.570796327">
+        <joint name="Motor_One_Joint_Two" type="hinge" axis="0 0 1" range="-0.7853981634 0.7853981634"/>
+        <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+        <geom type="capsule" fromto="0 0 0 0.051 0 0" size="0.010" mass="0.020" rgba="0.55 0.55 0.55 1"/>
+        <body name="Leg_Two_Motor_Two" pos="0.051 0 0" euler="0 -0.666718034 0">
+          <joint name="Joint_One_Motor_Two" type="hinge" axis="0 1 0" range="-0.7853981634 0.7853981634"/>
+          <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+          <geom type="capsule" fromto="0 0 0 0.065 0 0" size="0.009" mass="0.025" rgba="0.65 0.65 0.65 1"/>
+          <body name="Leg_Two_Motor_Three" pos="0.065 0 0" euler="0 2.122223468 0">
+            <joint name="Joint_Two_Motor_Two" type="hinge" axis="0 1 0" range="-1.221730476 1.221730476"/>
+            <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+            <geom type="capsule" fromto="0 0 0 0.121 0 0" size="0.008" mass="0.040" rgba="0.7 0.7 0.7 1"/>
+            <geom type="sphere" pos="0.121 0 0" size="0.012" mass="0.005" friction="1.8 0.08 0.02" rgba="0.12 0.12 0.12 1"/>
+            <site name="elbow_two" pos="0 0 0" size="0.009" rgba="1 0 0 0.5" type="sphere"/>
+            <site name="tibia_two_tip" pos="0.121 0 0" size="0.007"/>
           </body>
         </body>
       </body>
 
-      <!-- ==================== LEG THREE ==================== -->
-      <body name="Leg_Three_Motor_One" pos="0.0431 -0.07465 -0.035" euler="1.570796 0 2.094395">
-        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-        <geom type="mesh" mesh="Leg_Three_Motor_One" rgba="0.3 0.3 0.3 1"/>
-
-        <body name="Leg_Three_Joint_One" pos="-0.0135 0.037 0" euler="3.141593 0 1.570796">
-          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
-          <joint name="Motor_One_Joint_Three" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
-          <geom type="mesh" mesh="Leg_Three_Joint_One" rgba="0.7 0.7 0.7 1"/>
-
-          <body name="Leg_Three_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.570796 0 -1.570796">
-            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-            <joint name="Joint_One_Motor_Three" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
-            <geom type="mesh" mesh="Leg_Three_Motor_Two" rgba="0.3 0.3 0.3 1"/>
-
-            <body name="Leg_Three_Joint_Two" pos="0.0505 0 0" euler="3.141593 0 1.570796">
-              <inertial pos="-0.016732 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
-              <geom type="mesh" mesh="Leg_Three_Joint_Two" rgba="0.7 0.7 0.7 1"/>
-
-              <body name="Leg_Three_Motor_Three" pos="-0.042 0.0175 0" euler="0 0 1.570796">
-                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-                <joint name="Joint_Two_Motor_Three" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
-                <geom type="mesh" mesh="Leg_Three_Motor_Three" rgba="0.3 0.3 0.3 1"/>
-
-                <body name="Leg_Three_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
-                  <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
-                  <geom type="mesh" mesh="Leg_Three_Foot" rgba="0.7 0.7 0.7 1"/>
-                  <site name="elbow_three" pos="0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
-                  <site name="tibia_three_tip" pos="0 0.0388 -0.007" size="0.01"/>
-                </body>
-              </body>
-            </body>
+      <!-- BR / leg 2: pivot (-110.4, -58.4) mm, neutral radial yaw -135 deg -->
+      <body name="Leg_Three_Motor_One" pos="-0.1104 -0.0584 0" euler="0 0 -2.35619449">
+        <joint name="Motor_One_Joint_Three" type="hinge" axis="0 0 1" range="-0.7853981634 0.7853981634"/>
+        <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+        <geom type="capsule" fromto="0 0 0 0.051 0 0" size="0.010" mass="0.020" rgba="0.55 0.55 0.55 1"/>
+        <body name="Leg_Three_Motor_Two" pos="0.051 0 0" euler="0 -0.666718034 0">
+          <joint name="Joint_One_Motor_Three" type="hinge" axis="0 1 0" range="-0.7853981634 0.7853981634"/>
+          <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+          <geom type="capsule" fromto="0 0 0 0.065 0 0" size="0.009" mass="0.025" rgba="0.65 0.65 0.65 1"/>
+          <body name="Leg_Three_Motor_Three" pos="0.065 0 0" euler="0 2.122223468 0">
+            <joint name="Joint_Two_Motor_Three" type="hinge" axis="0 1 0" range="-1.221730476 1.221730476"/>
+            <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+            <geom type="capsule" fromto="0 0 0 0.121 0 0" size="0.008" mass="0.040" rgba="0.7 0.7 0.7 1"/>
+            <geom type="sphere" pos="0.121 0 0" size="0.012" mass="0.005" friction="1.8 0.08 0.02" rgba="0.12 0.12 0.12 1"/>
+            <site name="elbow_three" pos="0 0 0" size="0.009" rgba="1 0 0 0.5" type="sphere"/>
+            <site name="tibia_three_tip" pos="0.121 0 0" size="0.007"/>
           </body>
         </body>
       </body>
 
-      <!-- ==================== LEG FOUR ==================== -->
-      <body name="Leg_Four_Motor_One" pos="-0.0432 -0.07465 -0.035" euler="1.5708 0 1.0472">
-        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-        <geom type="mesh" mesh="Leg_Four_Motor_One" rgba="0.3 0.3 0.3 1"/>
-
-        <body name="Leg_Four_Joint_One" pos="-0.0135 0.037 0" euler="3.1416 0 1.5708">
-          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
-          <joint name="Motor_One_Joint_Four" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
-          <geom type="mesh" mesh="Leg_Four_Joint_One" rgba="0.7 0.7 0.7 1"/>
-
-          <body name="Leg_Four_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.5708 0 -1.5708">
-            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-            <joint name="Joint_One_Motor_Four" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
-            <geom type="mesh" mesh="Leg_Four_Motor_Two" rgba="0.3 0.3 0.3 1"/>
-
-            <body name="Leg_Four_Joint_Two" pos="0.0505 0 0" euler="3.1416 0 1.5708">
-              <inertial pos="-0.016732 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
-              <geom type="mesh" mesh="Leg_Four_Joint_Two" rgba="0.7 0.7 0.7 1"/>
-
-              <body name="Leg_Four_Motor_Three" pos="-0.042 0.0175 0" euler="0 0 1.5708">
-                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-                <joint name="Joint_Two_Motor_Four" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
-                <geom type="mesh" mesh="Leg_Four_Motor_Three" rgba="0.3 0.3 0.3 1"/>
-
-                  <body name="Leg_Four_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
-                    <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
-                  
-                    <!-- Планка стопы (теперь без коллизий) -->
-                    <geom type="mesh" mesh="Leg_Four_Foot" rgba="0.7 0.7 0.7 1"/>
-                    <site name="elbow_four" pos="0.0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
-                    <site name="tibia_four_tip" pos="0 0.0388 -0.007" size="0.01"/>
-                </body>
-              </body>
-            </body>
+      <!-- BL / leg 3: pivot (-110.4, +58.4) mm, neutral radial yaw +135 deg -->
+      <body name="Leg_Four_Motor_One" pos="-0.1104 0.0584 0" euler="0 0 2.35619449">
+        <joint name="Motor_One_Joint_Four" type="hinge" axis="0 0 1" range="-0.7853981634 0.7853981634"/>
+        <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+        <geom type="capsule" fromto="0 0 0 0.051 0 0" size="0.010" mass="0.020" rgba="0.55 0.55 0.55 1"/>
+        <body name="Leg_Four_Motor_Two" pos="0.051 0 0" euler="0 -0.666718034 0">
+          <joint name="Joint_One_Motor_Four" type="hinge" axis="0 1 0" range="-0.7853981634 0.7853981634"/>
+          <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+          <geom type="capsule" fromto="0 0 0 0.065 0 0" size="0.009" mass="0.025" rgba="0.65 0.65 0.65 1"/>
+          <body name="Leg_Four_Motor_Three" pos="0.065 0 0" euler="0 2.122223468 0">
+            <joint name="Joint_Two_Motor_Four" type="hinge" axis="0 1 0" range="-1.221730476 1.221730476"/>
+            <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+            <geom type="capsule" fromto="0 0 0 0.121 0 0" size="0.008" mass="0.040" rgba="0.7 0.7 0.7 1"/>
+            <geom type="sphere" pos="0.121 0 0" size="0.012" mass="0.005" friction="1.8 0.08 0.02" rgba="0.12 0.12 0.12 1"/>
+            <site name="elbow_four" pos="0 0 0" size="0.009" rgba="1 0 0 0.5" type="sphere"/>
+            <site name="tibia_four_tip" pos="0.121 0 0" size="0.007"/>
           </body>
         </body>
       </body>
 
-      <!-- ==================== LEG FIVE ==================== -->
-      <body name="Leg_Five_Motor_One" pos="-0.08635 0.000087 -0.035" euler="1.5708 0 0">
-        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-        <geom type="mesh" mesh="Leg_Five_Motor_One" rgba="0.3 0.3 0.3 1"/>
-
-        <body name="Leg_Five_Joint_One" pos="-0.0135 0.037 0" euler="3.1416 0 1.5708">
-          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
-          <joint name="Motor_One_Joint_Five" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
-          <geom type="mesh" mesh="Leg_Five_Joint_One" rgba="0.7 0.7 0.7 1"/>
-
-          <body name="Leg_Five_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.5708 0 -1.5708">
-            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-            <joint name="Joint_One_Motor_Five" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
-            <geom type="mesh" mesh="Leg_Five_Motor_Two" rgba="0.3 0.3 0.3 1"/>
-
-            <body name="Leg_Five_Joint_Two" pos="0.0505 -0.042 0" euler="0 0 -1.5708">
-              <inertial pos="-0.025268 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
-              <geom type="mesh" mesh="Leg_Five_Joint_Two" rgba="0.7 0.7 0.7 1"/>
-
-              <body name="Leg_Five_Motor_Three" pos="0 0.0175 0" euler="3.1416 0 1.5708">
-                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-                <joint name="Joint_Two_Motor_Five" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
-                <geom type="mesh" mesh="Leg_Five_Motor_Three" rgba="0.3 0.3 0.3 1"/>
-
-                <body name="Leg_Five_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
-                  <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
-                  <geom type="mesh" mesh="Leg_Five_Foot" rgba="0.7 0.7 0.7 1"/>
-                  <site name="elbow_five" pos="0.0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
-                  <site name="tibia_five_tip" pos="0 0.0388 -0.007" size="0.01"/>
-                </body>
-              </body>
-            </body>
+      <!-- ML / leg 4: pivot (0, +90.8) mm, neutral radial yaw +90 deg -->
+      <body name="Leg_Five_Motor_One" pos="0 0.0908 0" euler="0 0 1.570796327">
+        <joint name="Motor_One_Joint_Five" type="hinge" axis="0 0 1" range="-0.7853981634 0.7853981634"/>
+        <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+        <geom type="capsule" fromto="0 0 0 0.051 0 0" size="0.010" mass="0.020" rgba="0.55 0.55 0.55 1"/>
+        <body name="Leg_Five_Motor_Two" pos="0.051 0 0" euler="0 -0.666718034 0">
+          <joint name="Joint_One_Motor_Five" type="hinge" axis="0 1 0" range="-0.7853981634 0.7853981634"/>
+          <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+          <geom type="capsule" fromto="0 0 0 0.065 0 0" size="0.009" mass="0.025" rgba="0.65 0.65 0.65 1"/>
+          <body name="Leg_Five_Motor_Three" pos="0.065 0 0" euler="0 2.122223468 0">
+            <joint name="Joint_Two_Motor_Five" type="hinge" axis="0 1 0" range="-1.221730476 1.221730476"/>
+            <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+            <geom type="capsule" fromto="0 0 0 0.121 0 0" size="0.008" mass="0.040" rgba="0.7 0.7 0.7 1"/>
+            <geom type="sphere" pos="0.121 0 0" size="0.012" mass="0.005" friction="1.8 0.08 0.02" rgba="0.12 0.12 0.12 1"/>
+            <site name="elbow_five" pos="0 0 0" size="0.009" rgba="1 0 0 0.5" type="sphere"/>
+            <site name="tibia_five_tip" pos="0.121 0 0" size="0.007"/>
           </body>
         </body>
       </body>
 
-      <!-- ==================== LEG SIX ==================== -->
-      <body name="Leg_Six_Motor_One" pos="-0.0432 0.074825 -0.035" euler="1.5708 0 -1.0472">
-        <inertial pos="0.000584 0.017127 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-        <geom type="mesh" mesh="Leg_Six_Motor_One" rgba="0.3 0.3 0.3 1"/>
-
-        <body name="Leg_Six_Joint_One" pos="-0.0135 0.037 0" euler="3.1416 0 1.5708">
-          <inertial pos="-0.021 -0.0275 0" mass="0.038904" diaginertia="7.2207e-06 6.0887e-06 7.2207e-06"/>
-          <joint name="Motor_One_Joint_Six" type="hinge" axis="1 0 0" range="-1.5 1.5"/>
-          <geom type="mesh" mesh="Leg_Six_Joint_One" rgba="0.7 0.7 0.7 1"/>
-
-          <body name="Leg_Six_Motor_Two" pos="-0.021 -0.055 -0.021" euler="-1.5708 0 -1.5708">
-            <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-            <joint name="Joint_One_Motor_Six" type="hinge" axis="0 -1 0" range="-1.5 1.5"/>
-            <geom type="mesh" mesh="Leg_Six_Motor_Two" rgba="0.3 0.3 0.3 1"/>
-
-            <body name="Leg_Six_Joint_Two" pos="0.0505 -0.042 0" euler="0 0 -1.5708">
-              <inertial pos="-0.025268 0.003844 0" mass="0.020873" diaginertia="4.6638e-06 1.0884e-06 3.7457e-06"/>
-              <geom type="mesh" mesh="Leg_Six_Joint_Two" rgba="0.7 0.7 0.7 1"/>
-
-              <body name="Leg_Six_Motor_Three" pos="0 0.0175 0" euler="3.1416 0 1.5708">
-                <inertial pos="0.014084 -0.019873 0.000009" mass="0.050741" diaginertia="8.7245e-06 1.3617e-05 1.5055e-05"/>
-                <joint name="Joint_Two_Motor_Six" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
-                <geom type="mesh" mesh="Leg_Six_Motor_Three" rgba="0.3 0.3 0.3 1"/>
-
-                <body name="Leg_Six_Foot" pos="0.0415 -0.021 -0.0125" euler="1.5708 0 1.5708">
-                  <inertial pos="0.00007 0.038827 -0.007027" mass="0.029454" diaginertia="2.3584e-05 6.3964e-06 2.0450e-05"/>
-                  <geom type="mesh" mesh="Leg_Six_Foot" rgba="0.7 0.7 0.7 1"/>
-                  <site name="elbow_six" pos="0.0 0.02 0" size="0.03" rgba="1 0 0 0.7" type="sphere"/>
-                  <site name="tibia_six_tip" pos="0 0.0388 -0.007" size="0.01"/>
-                </body>
-              </body>
-            </body>
+      <!-- FL / leg 5: pivot (+110.4, +58.4) mm, neutral radial yaw +45 deg -->
+      <body name="Leg_Six_Motor_One" pos="0.1104 0.0584 0" euler="0 0 0.7853981634">
+        <joint name="Motor_One_Joint_Six" type="hinge" axis="0 0 1" range="-0.7853981634 0.7853981634"/>
+        <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+        <geom type="capsule" fromto="0 0 0 0.051 0 0" size="0.010" mass="0.020" rgba="0.55 0.55 0.55 1"/>
+        <body name="Leg_Six_Motor_Two" pos="0.051 0 0" euler="0 -0.666718034 0">
+          <joint name="Joint_One_Motor_Six" type="hinge" axis="0 1 0" range="-0.7853981634 0.7853981634"/>
+          <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+          <geom type="capsule" fromto="0 0 0 0.065 0 0" size="0.009" mass="0.025" rgba="0.65 0.65 0.65 1"/>
+          <body name="Leg_Six_Motor_Three" pos="0.065 0 0" euler="0 2.122223468 0">
+            <joint name="Joint_Two_Motor_Six" type="hinge" axis="0 1 0" range="-1.221730476 1.221730476"/>
+            <geom type="box" size="0.020 0.014 0.020" mass="0.055" rgba="0.25 0.25 0.25 1"/>
+            <geom type="capsule" fromto="0 0 0 0.121 0 0" size="0.008" mass="0.040" rgba="0.7 0.7 0.7 1"/>
+            <geom type="sphere" pos="0.121 0 0" size="0.012" mass="0.005" friction="1.8 0.08 0.02" rgba="0.12 0.12 0.12 1"/>
+            <site name="elbow_six" pos="0 0 0" size="0.009" rgba="1 0 0 0.5" type="sphere"/>
+            <site name="tibia_six_tip" pos="0.121 0 0" size="0.007"/>
           </body>
         </body>
       </body>
-
     </body>
   </worldbody>
 
   <actuator>
-    <!-- ПРИВОДЫ -->
-    <!-- LEG ONE -->
-    <position joint="Motor_One_Joint_One" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_One_Motor_One" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_Two_Motor_One" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    
-    <!-- LEG TWO -->
-    <position joint="Motor_One_Joint_Two" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_One_Motor_Two" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_Two_Motor_Two" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    
-    <!-- LEG THREE -->
-    <position joint="Motor_One_Joint_Three" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_One_Motor_Three" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_Two_Motor_Three" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    
-    <!-- LEG FOUR -->
-    <position joint="Motor_One_Joint_Four" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_One_Motor_Four" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_Two_Motor_Four" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-
-    <!-- LEG FIVE -->
-    <position joint="Motor_One_Joint_Five" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_One_Motor_Five" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_Two_Motor_Five" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    
-    <!-- LEG SIX -->
-    <position joint="Motor_One_Joint_Six" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_One_Motor_Six" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
-    <position joint="Joint_Two_Motor_Six" ctrlrange="-1.5 1.5" ctrllimited="true" kp="15" forcelimited="true" forcerange="-1.5 1.5"/>
+    <!-- MG996R-like position servos. 1.1 N·m is a conservative nominal torque cap. -->
+    <position name="FR_coxa"  joint="Motor_One_Joint_One"   kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="FR_femur" joint="Joint_One_Motor_One"   kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="FR_tibia" joint="Joint_Two_Motor_One"   kp="22" ctrlrange="-1.221730476 1.221730476" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="MR_coxa"  joint="Motor_One_Joint_Two"   kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="MR_femur" joint="Joint_One_Motor_Two"   kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="MR_tibia" joint="Joint_Two_Motor_Two"   kp="22" ctrlrange="-1.221730476 1.221730476" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="BR_coxa"  joint="Motor_One_Joint_Three" kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="BR_femur" joint="Joint_One_Motor_Three" kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="BR_tibia" joint="Joint_Two_Motor_Three" kp="22" ctrlrange="-1.221730476 1.221730476" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="BL_coxa"  joint="Motor_One_Joint_Four"  kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="BL_femur" joint="Joint_One_Motor_Four"  kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="BL_tibia" joint="Joint_Two_Motor_Four"  kp="22" ctrlrange="-1.221730476 1.221730476" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="ML_coxa"  joint="Motor_One_Joint_Five"  kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="ML_femur" joint="Joint_One_Motor_Five"  kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="ML_tibia" joint="Joint_Two_Motor_Five"  kp="22" ctrlrange="-1.221730476 1.221730476" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="FL_coxa"  joint="Motor_One_Joint_Six"   kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="FL_femur" joint="Joint_One_Motor_Six"   kp="22" ctrlrange="-0.7853981634 0.7853981634" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
+    <position name="FL_tibia" joint="Joint_Two_Motor_Six"   kp="22" ctrlrange="-1.221730476 1.221730476" ctrllimited="true" forcerange="-1.1 1.1" forcelimited="true"/>
   </actuator>
 </mujoco>
