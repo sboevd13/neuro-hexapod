@@ -40,21 +40,38 @@ Neutral foot targets relative to the corresponding coxa pivot, mm:
 - ML: `(0, -116, -80)`
 - FL: `(82, -82, -80)`
 
-The firmware control frame is 20 ms / 50 Hz. The MuJoCo model therefore uses a 4 ms timestep with `frame_skip=5`.
+The firmware control frame is 20 ms / 50 Hz. The MuJoCo model uses a 4 ms physics timestep with `frame_skip=5`.
+
+The HOME geometry has been checked numerically in MuJoCo: all six `tibia_*_tip` sites match the expected firmware foot targets to about 0.00-0.03 mm.
+
+## Training model philosophy
+
+The training model intentionally does **not** use STL render meshes. STL appearance is irrelevant to the policy and made the WSL viewer slower and harder to debug.
+
+`models/arena.xml` therefore uses only primitive geometry:
+
+- body: box based on the real body-plate outer dimensions;
+- MG996R bodies: boxes using nominal servo dimensions;
+- coxa/femur/tibia: capsules with the real kinematic lengths;
+- foot: a small sphere approximating the physical 12 mm-thick foot bumper.
+
+The kinematic contact point remains at 121 mm from the tibia joint. The foot sphere is centred slightly before that point so its outer surface approximately ends at the kinematic tip.
+
+Robot geoms collide with the floor but self-collision is disabled through MuJoCo contact masks. This keeps MJX training fast.
 
 ## Action mapping
 
-The neural-network action remains 18-dimensional and uses the firmware leg order:
+The neural-network action remains 18-dimensional and uses firmware leg order:
 
 `FR coxa, FR femur, FR tibia, MR coxa, ... , FL tibia`.
 
-The existing normalized SAC action `[-1, 1]` is retained. The current safe simulation deltas around the neutral physical pose are:
+The current simulation action ranges around HOME are:
 
 - coxa: +/-45 deg
 - femur: +/-45 deg
 - tibia: +/-70 deg
 
-These are deliberately conservative. The real firmware ultimately maps IK results to 0..180 degree MG996R servo commands and applies per-leg calibration trims.
+These are still provisional safe ranges. The physical firmware ultimately maps commands to MG996R servo positions and applies calibration trims.
 
 ## Servo calibration from firmware
 
@@ -72,28 +89,29 @@ Global IK mechanical offsets:
 - femur: +14 deg
 - tibia: -23 deg in the firmware IK formula
 
-These calibration values describe the real servo installation. They are not baked into the MuJoCo joint zero positions; MuJoCo joint zero is defined as the ideal neutral HOME stance. They will matter when the learned 18 joint targets are converted to commands for the real Arduino/PCA9685 robot.
+These calibration values are not baked into the MuJoCo ideal HOME joint zeros. They belong in the future policy-to-servo conversion layer for the physical robot.
 
 ## Files in this branch
 
-- `models/arena.xml` — MuJoCo rigid-body model matched to the real robot's kinematic dimensions, leg mounting points and 50 Hz control period.
+- `models/arena.xml` — STL-free MuJoCo training model.
+- `real_robot_model.py` — regenerates that primitive training model.
 - `arena_real.py` — real-robot reset pose and viewer wrapper.
-- `sac_real.py` — training entry point that reuses the existing SAC implementation with the real-robot environment.
-- `real_robot_model.py` — generates a lightweight visual version of `models/arena.xml`. Its body outline is taken from the real printable Body Top/Bottom STL hull; visual parts are separated from collision/inertia using MuJoCo geom groups so appearance does not change the physics. Leg visuals are intentionally low-poly because WSL rendering was measured as the viewer bottleneck.
+- `sac_real.py` — training entry point reusing the existing SAC pipeline.
 
-Generate the visual model after pulling this branch:
+Regenerate the model:
 
 ```bash
 python real_robot_model.py
+python check_geometry.py
 ```
 
-Viewer example:
+Viewer:
 
 ```bash
 python arena_real.py --agent good_models/last/agent.flax --norm good_models/last/obs_norm_last.npz
 ```
 
-Training entry point:
+Training:
 
 ```bash
 python sac_real.py
@@ -101,13 +119,15 @@ python sac_real.py
 
 ## Still approximate / needs measurement on the physical robot
 
-The following values are currently engineering approximations rather than measured robot parameters:
+The major remaining sim-to-real uncertainties are dynamic rather than visual:
 
 - assembled body mass and centre of mass;
 - printed-link masses and inertias;
-- joint friction/backlash;
-- exact MG996R closed-loop response and deadband under the robot's supply voltage;
-- foot/ground friction for the actual foot material;
-- battery/electronics mass distribution.
+- exact MG996R speed/torque response at the robot supply voltage;
+- servo deadband, backlash and command delay;
+- real joint limits and sign/zero mapping for all 18 servos;
+- foot/ground friction and compliance;
+- battery/electronics mass distribution;
+- observations actually available on the physical robot (IMU, servo feedback, etc.).
 
-Before final sim-to-real training these should be measured or identified experimentally. The kinematic skeleton, leg order, neutral stance and 50 Hz command timing are already matched to the firmware values.
+These should be measured or identified before final transfer training. STL appearance is not required.
