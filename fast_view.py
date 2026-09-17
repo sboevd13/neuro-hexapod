@@ -1,49 +1,44 @@
+"""Ultra-light V5 viewer.
+
+This file deliberately does NOT import JAX, MJX, arena.py, or the neural network.
+It is only for visually checking the accepted V5 gait as fast as possible.
+Physics runs in native MuJoCo on CPU; rendering is low-resolution and low-effects.
+"""
+
 import argparse
 import time
 
-import jax
-import jax.numpy as jp
 import mujoco
-from mujoco import mjx
 import numpy as np
 
-from agent import ActorSimple_skip
-from arena import BattleArena, _force_command, _load_actor, _load_norm, normalize_obs
+from reference_gait import CYCLE_TIME, raised_stand_targets, reference_targets
 
 
-WINDOW_WIDTH = 640
-WINDOW_HEIGHT = 360
-RENDER_FPS = 25
-CONTROL_STEPS_PER_FRAME = 2  # 2 * 20 ms at 25 FPS = real-time 50 Hz control
+DEFAULT_WIDTH = 480
+DEFAULT_HEIGHT = 270
+DEFAULT_RENDER_FPS = 30
+CONTROL_DT = 0.020  # 50 Hz, same as the real robot
+SERVO_SPEED_RAD_S = np.deg2rad(60.0) / 0.14
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Fast low-effects hexapod viewer")
-    parser.add_argument("--agent", type=str, default=None, help="Actor .flax checkpoint")
-    parser.add_argument("--norm", type=str, default=None, help="Observation normalization .npz")
-    parser.add_argument(
-        "--command",
-        nargs=3,
-        type=float,
-        metavar=("VX", "VY", "YAW"),
-        default=None,
-        help="Fixed command: +VX forward, +VY left, +YAW left turn",
-    )
+    parser = argparse.ArgumentParser(description="Native MuJoCo V5 fast viewer")
+    parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
+    parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
+    parser.add_argument("--fps", type=int, default=DEFAULT_RENDER_FPS)
     return parser.parse_args()
 
 
-def disable_expensive_rendering(env, renderer):
-    # Disable expensive offscreen rendering quality first.
+def disable_expensive_rendering(model, renderer):
     try:
-        env.model.vis.quality.shadowsize = 0
+        model.vis.quality.shadowsize = 0
     except Exception:
         pass
     try:
-        env.model.vis.quality.offsamples = 1
+        model.vis.quality.offsamples = 1
     except Exception:
         pass
 
-    # Disable the main expensive MuJoCo render effects.
     for flag_name in (
         "mjRND_SHADOW",
         "mjRND_REFLECTION",
@@ -51,10 +46,56 @@ def disable_expensive_rendering(env, renderer):
         "mjRND_HAZE",
     ):
         try:
-            flag = getattr(mujoco.mjtRndFlag, flag_name)
-            renderer.scene.flags[flag] = 0
+            renderer.scene.flags[getattr(mujoco.mjtRndFlag, flag_name)] = 0
         except Exception:
             pass
+
+
+def reset_robot(model, data):
+    mujoco.mj_resetData(model, data)
+
+    data.qpos[0:3] = np.array([0.0, 0.0, 0.110])
+    data.qpos[3:7] = np.array([1.0, 0.0, 0.0, 0.0])
+
+    stand = np.asarray(raised_stand_targets(), dtype=np.float64)
+    data.qpos[7:25] = stand
+    data.ctrl[:] = np.clip(
+        stand,
+        model.actuator_ctrlrange[:, 0],
+        model.actuator_ctrlrange[:, 1],
+    )
+    mujoco.mj_forward(model, data)
+    return data.ctrl.copy(), 0.0
+
+
+def run_control_step(model, data, commanded_q, phase):
+    phase = (phase + CONTROL_DT / CYCLE_TIME) % 1.0
+    desired_q = np.asarray(reference_targets(phase), dtype=np.float64)
+    desired_q = np.clip(
+        desired_q,
+        model.actuator_ctrlrange[:, 0],
+        model.actuator_ctrlrange[:, 1],
+    )
+
+    # Same approximate MG996R command-rate limit used by the RL environment.
+    max_delta = SERVO_SPEED_RAD_S * CONTROL_DT
+    commanded_q = commanded_q + np.clip(
+        desired_q - commanded_q,
+        -max_delta,
+        max_delta,
+    )
+    commanded_q = np.clip(
+        commanded_q,
+        model.actuator_ctrlrange[:, 0],
+        model.actuator_ctrlrange[:, 1],
+    )
+    data.ctrl[:] = commanded_q
+
+    physics_steps = max(1, int(round(CONTROL_DT / float(model.opt.timestep))))
+    for _ in range(physics_steps):
+        mujoco.mj_step(model, data)
+
+    return commanded_q, phase
 
 
 def main():
@@ -62,75 +103,55 @@ def main():
     from pygame.locals import QUIT
 
     args = parse_args()
-    env = BattleArena()
+    width = max(240, int(args.width))
+    height = max(160, int(args.height))
+    render_fps = max(5, int(args.fps))
 
-    actor = ActorSimple_skip(
-        env.action_space_shape[0],
-        env.ctrlrange_high,
-        env.ctrlrange_low,
-        512,
-        512,
-    )
+    model = mujoco.MjModel.from_xml_path("models/arena.xml")
 
-    jit_reset = jax.jit(env.reset)
-    jit_step = jax.jit(env.step)
-    state = jit_reset(jax.random.key(42))
+    # Fast CPU settings for this visual check. The physical model is unchanged.
+    model.opt.solver = mujoco.mjtSolver.mjSOL_NEWTON
+    model.opt.integrator = mujoco.mjtIntegrator.mjINT_EULER
+    model.opt.disableflags = mujoco.mjtDisableBit.mjDSBL_EULERDAMP
+    model.opt.iterations = 4
+    model.opt.ls_iterations = 4
 
-    dummy_obs = jp.expand_dims(state["obs"], 0)
-    params = _load_actor(actor, dummy_obs, args.agent)
-    obs_mean, obs_var = _load_norm(args.norm, env.observation_space_shape[0])
+    data = mujoco.MjData(model)
+    commanded_q, phase = reset_robot(model, data)
 
-    if args.command is not None:
-        fixed_command = np.clip(np.asarray(args.command, dtype=np.float32), -1.0, 1.0)
-    elif params is None:
-        # No trained actor yet: show the accepted forward V5 prior.
-        fixed_command = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-    else:
-        fixed_command = None
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "body")
 
-    if params is None:
-        print("FAST VIEW: V5 forward prior, no neural actor")
-    else:
-        print(f"FAST VIEW: actor={args.agent}")
-        jit_action = jax.jit(actor.get_action)
-
-    print(
-        f"Window {WINDOW_WIDTH}x{WINDOW_HEIGHT}, render {RENDER_FPS} FPS, "
-        f"control {RENDER_FPS * CONTROL_STEPS_PER_FRAME} Hz"
-    )
-    print("Shadows/reflections/skybox/haze disabled. SPACE=reset, ESC=exit")
-
-    env.model.vis.global_.offwidth = WINDOW_WIDTH
-    env.model.vis.global_.offheight = WINDOW_HEIGHT
+    model.vis.global_.offwidth = width
+    model.vis.global_.offheight = height
     try:
-        env.model.vis.quality.shadowsize = 0
-        env.model.vis.quality.offsamples = 1
+        model.vis.quality.shadowsize = 0
+        model.vis.quality.offsamples = 1
     except Exception:
         pass
 
-    renderer = mujoco.Renderer(
-        env.model,
-        width=WINDOW_WIDTH,
-        height=WINDOW_HEIGHT,
-    )
-    disable_expensive_rendering(env, renderer)
+    renderer = mujoco.Renderer(model, width=width, height=height)
+    disable_expensive_rendering(model, renderer)
 
     camera = mujoco.MjvCamera()
     camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
-    camera.trackbodyid = env.body_id
-    camera.distance = 0.75
+    camera.trackbodyid = body_id
+    camera.distance = 0.72
     camera.azimuth = 135
     camera.elevation = -25
 
     pygame.init()
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("Hexapod FAST VIEW")
+    screen = pygame.display.set_mode((width, height))
+    pygame.display.set_caption("Hexapod NATIVE FAST VIEW")
     clock = pygame.time.Clock()
 
-    inference_key = jax.random.key(7)
+    # Keep controller at exactly 50 Hz independent of chosen render FPS.
+    control_accumulator = 0.0
+    last_wall = time.perf_counter()
     frame = 0
-    reward = jp.array([0.0])
-    action = jp.zeros(18)
+
+    print("NATIVE FAST VIEW: no JAX, no MJX, no neural actor")
+    print(f"Window {width}x{height}, render target {render_fps} FPS, control 50 Hz")
+    print("Shadows/reflections/skybox/haze disabled. SPACE=reset, ESC=exit")
 
     try:
         while True:
@@ -140,46 +161,41 @@ def main():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     return
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    state = jit_reset(jax.random.key(time.time_ns()))
+                    commanded_q, phase = reset_robot(model, data)
+                    control_accumulator = 0.0
+                    last_wall = time.perf_counter()
 
-            # Run two 20 ms controller updates for every rendered frame.
-            # This keeps simulation control at 50 Hz while only rendering 25 FPS.
-            for _ in range(CONTROL_STEPS_PER_FRAME):
-                if fixed_command is not None:
-                    state = _force_command(env, state, fixed_command)
+            now = time.perf_counter()
+            elapsed = min(now - last_wall, 0.10)
+            last_wall = now
+            control_accumulator += elapsed
 
-                if params is None:
-                    action = jp.zeros(18)
-                else:
-                    obs = jp.expand_dims(state["obs"], 0)
-                    obs_norm = normalize_obs(obs, obs_mean, obs_var)
-                    inference_key, action_key = jax.random.split(inference_key)
-                    _, _, mean_action = jit_action(params, obs_norm, action_key)
-                    action = jp.squeeze(mean_action)
+            # Advance simulation in 20 ms controller chunks until caught up.
+            while control_accumulator >= CONTROL_DT:
+                commanded_q, phase = run_control_step(
+                    model, data, commanded_q, phase
+                )
+                control_accumulator -= CONTROL_DT
 
-                state, _, reward, _, _ = jit_step(state, action)
-
-            # One GPU/device -> CPU transfer and one render per displayed frame.
-            mjx.get_data_into(env.data, env.model, state["data"])
-            mujoco.mj_forward(env.model, env.data)
-            renderer.update_scene(env.data, camera=camera)
+            renderer.update_scene(data, camera=camera)
+            # update_scene can refresh scene flags, so force them off every frame.
+            disable_expensive_rendering(model, renderer)
             pixels = renderer.render()
+
             surface = pygame.surfarray.make_surface(np.swapaxes(pixels, 0, 1))
             screen.blit(surface, (0, 0))
             pygame.display.flip()
 
-            if frame % RENDER_FPS == 0:
-                command_np = np.asarray(jax.device_get(state["command"]))
-                print(
-                    f"step={int(state['step']):4d} "
-                    f"cmd=({command_np[0]:+.2f},{command_np[1]:+.2f},{command_np[2]:+.0f}) "
-                    f"x={float(state['last_com'][0]):+.3f} "
-                    f"y={float(state['last_com'][1]):+.3f} "
-                    f"reward={float(reward[0]):+.3f}"
-                )
-
-            clock.tick(RENDER_FPS)
+            clock.tick(render_fps)
             frame += 1
+
+            if frame % render_fps == 0:
+                pos = data.xpos[body_id]
+                print(
+                    f"FPS={clock.get_fps():5.1f} "
+                    f"phase={phase:.3f} "
+                    f"x={pos[0]:+.3f} y={pos[1]:+.3f} z={pos[2]:+.3f}"
+                )
     finally:
         renderer.close()
         pygame.quit()
