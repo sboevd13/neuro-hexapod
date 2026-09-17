@@ -35,7 +35,7 @@ class WorkerThread(threading.Thread):
         self.device = config['worker_device']
         
         self.env_batch_size = config['worker_batch_size']
-        self.validation_batch_size = 64 
+        self.validation_batch_size = config['validation_batch_size']
         self.total_batch_size = self.env_batch_size + self.validation_batch_size
 
         self.random_steps_count = config['random_steps_count']
