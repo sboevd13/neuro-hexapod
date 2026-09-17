@@ -11,12 +11,17 @@ from worker import WorkerThread
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train residual SAC on the reference hexapod gait")
+    parser = argparse.ArgumentParser(
+        description="Train command-conditioned SAC locomotion for the hexapod"
+    )
     parser.add_argument(
         "--resume",
         type=str,
         default=None,
-        help="Optional checkpoint directory created by THIS residual environment.",
+        help=(
+            "Optional checkpoint directory created by THIS command-conditioned "
+            "environment. Do not resume the old +/-10 degree residual model."
+        ),
     )
     return parser.parse_args()
 
@@ -44,7 +49,9 @@ def main():
         gamma=0.985,
         q_lr=0.0003,
         p_lr=0.0003,
-        total_steps=2_000_000,
+        # Omnidirectional command tracking is a substantially broader task than
+        # the previous forward-only residual problem, so give SAC more budget.
+        total_steps=5_000_000,
         warmup_steps=10_000,
         report_to_tensorboard=True,
         report_to_wandb=False,
@@ -56,9 +63,21 @@ def main():
 
     env = BattleArena()
     print(f"Observation shape: {env.observation_space_shape}")
-    print(f"Action shape: {env.action_space_shape} (residual corrections)")
+    print(f"Action shape: {env.action_space_shape} (18 learned joint controls)")
+    print(
+        "Command convention: +vx forward, +vy left, +yaw left turn; "
+        "vx/vy analog, yaw in {-1, 0, +1}."
+    )
+    print(
+        f"Training targets: +/-{env.MAX_LINEAR_SPEED_M_S:.2f} m/s linear, "
+        f"+/-{env.MAX_YAW_RATE_RAD_S:.2f} rad/s yaw."
+    )
+    print(
+        "V5 TURBO remains a strong prior for straight-forward motion, "
+        "but side/back/turn motion is learned with much wider joint authority."
+    )
 
-    # Keep the existing network size for now.
+    # Keep the existing 512x512 actor as requested.
     agent = ActorSimple_skip(
         env.action_space_shape[0],
         env.ctrlrange_high,
@@ -68,8 +87,13 @@ def main():
     )
 
     state0 = env.reset(jax.random.key(0))
-    observations_count = int(jax.numpy.prod(jax.numpy.array(state0["obs"].shape)).item())
-    agent_params = agent.init(init_key, jax.numpy.ones((1, observations_count)))["params"]
+    observations_count = int(
+        jax.numpy.prod(jax.numpy.array(state0["obs"].shape)).item()
+    )
+    agent_params = agent.init(
+        init_key,
+        jax.numpy.ones((1, observations_count)),
+    )["params"]
 
     buffer_thread = BufferThread(
         config["buffer_size"],
@@ -92,7 +116,7 @@ def main():
             ref_agent_params=[],
             validation_agent_params=[],
         ),
-        name="Hexapod-Residual-Worker-0",
+        name="Hexapod-Command-Locomotion-Worker-0",
     )
 
     trainer_thread = TrainingThread(
@@ -105,18 +129,21 @@ def main():
         observation_space_shape=env.observation_space_shape,
         action_space_shape=env.action_space_shape,
         worker_thread=worker_thread,
-        name="Hexapod-Residual-Trainer",
+        name="Hexapod-Command-Locomotion-Trainer",
     )
 
-    # Old checkpoints are intentionally not auto-loaded: their observation space and
-    # action semantics are incompatible with residual control.
+    # Observation size is still 46, but action semantics/reward changed enough
+    # that the old forward residual checkpoint should not be reused.
     if args.resume:
-        print(f"Resuming residual training from: {args.resume}")
+        print(f"Resuming command-conditioned training from: {args.resume}")
         trainer_thread.load_state(args.resume)
         worker_thread.step = trainer_thread.current_step
     else:
-        print("Starting residual training from scratch.")
-        print("At zero residual the robot already follows the reference gait.")
+        print("Starting command-conditioned locomotion training from scratch.")
+        print(
+            "Every parallel simulation receives changing vx/vy/yaw commands; "
+            "straight-forward zero action still has the accepted V5 prior."
+        )
 
     buffer_thread.start()
     worker_thread.start()
@@ -132,12 +159,12 @@ def main():
         trainer_thread.running = False
 
     save_path = (
-        "checkpoints/residual_interrupted"
+        "checkpoints/command_locomotion_interrupted"
         if interrupted
-        else "checkpoints/residual_final"
+        else "checkpoints/command_locomotion_final"
     )
     trainer_thread.save_state(save_path)
-    print(f"Residual model saved to: {save_path}")
+    print(f"Command-conditioned model saved to: {save_path}")
 
 
 if __name__ == "__main__":
