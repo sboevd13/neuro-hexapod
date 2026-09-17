@@ -34,15 +34,18 @@ def main():
     worker_device = devices[0]
     trainer_device = devices[1] if len(devices) > 1 else worker_device
 
+    # Conservative first-run sizes for a 6 GB RTX 3060 / WSL setup.
+    # They reduce the size of the initial MJX/XLA compile graph dramatically.
+    # Once this runs comfortably, these can be raised again.
     config = dict(
         seed=42,
         worker_device=worker_device,
         trainer_device=trainer_device,
-        worker_batch_size=256,
-        validation_batch_size=64,
-        trainer_batch_size=1024,
+        worker_batch_size=64,
+        validation_batch_size=16,
+        trainer_batch_size=256,
         buffer_size=1_000_000,
-        random_steps_count=1000,
+        random_steps_count=250,
         initial_alpha=1.0,
         autotune_alpha=True,
         tau=0.005,
@@ -53,7 +56,9 @@ def main():
         # the previous forward-only residual problem, so give SAC more budget.
         total_steps=5_000_000,
         warmup_steps=10_000,
-        report_to_tensorboard=True,
+        # TensorBoard used torch.utils.tensorboard in the legacy trainer. Keep it
+        # disabled so PyTorch is not a dependency of locomotion training.
+        report_to_tensorboard=False,
         report_to_wandb=False,
     )
 
@@ -75,6 +80,12 @@ def main():
     print(
         "V5 TURBO remains a strong prior for straight-forward motion, "
         "but side/back/turn motion is learned with much wider joint authority."
+    )
+    print(
+        f"Batches: worker={config['worker_batch_size']}, "
+        f"validation={config['validation_batch_size']}, "
+        f"total_envs={config['worker_batch_size'] + config['validation_batch_size']}, "
+        f"trainer={config['trainer_batch_size']}."
     )
 
     # Keep the existing 512x512 actor as requested.
