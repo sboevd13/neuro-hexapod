@@ -160,7 +160,7 @@ class LocomotionEnv:
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:3] = [0, 0, 0.110]
         self.data.qpos[3:7] = [math.cos(yaw/2), 0, 0, math.sin(yaw/2)]
-        self.data.qpos[7:] = STAND + rng.uniform(-0.002, 0.002, 18)
+        self.data.qpos[7:25] = STAND + rng.uniform(-0.002, 0.002, 18)
         self.commanded_q = np.clip(STAND.copy(), self.low, self.high)
         self.data.ctrl[:] = self.commanded_q
         mujoco.mj_forward(self.model, self.data)
