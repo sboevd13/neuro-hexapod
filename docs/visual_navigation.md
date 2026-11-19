@@ -65,3 +65,32 @@ python autonomous_world.py --seed 11 --seconds 90 --vision-odometry \
 флага **не превращает** лабораторную сегментацию цветов в универсальное зрение.
 Он не предназначен для работы с настоящим роботом до появления датчиков силы,
 аппаратного стопа и проверки ограничений.
+
+
+## Measured MuJoCo results (19 November 2026)
+
+[Reproducible CI evidence](https://github.com/sboevd13/neuro-hexapod/actions/runs/44563168317),
+including actual RGB frames as artifacts.
+
+| Room seed | Pose RMSE (scan matching) | Pose RMSE (foot + gyro only) | RGB detections | Map coverage |
+| --- | ---: | ---: | ---: | ---: |
+| 7 | 10.42 cm | 6.12 cm | 42 | 56.75% |
+| 11 | 4.18 cm | 8.65 cm | 24 | 53.88% |
+| 23 | 5.49 cm | 5.65 cm | 47 | 55.63% |
+| **Mean** | **6.70 cm** | **6.81 cm** | — | — |
+
+Each room ran for 22 seconds (V5 gait). In total 75 camera frames, eight
+object inspections, zero robot/object contacts and zero falls.
+
+Three additional **continuous physics and learning** sessions: seed 11
+(55 s), seed 7 (80 s), seed 23 (80 s), with 43 camera frames each:
+four actual object contacts, three additional gentle push actions,
+three sensor-outcome labels and three in-session updates of the neural
+outcome ensemble, and no falls. Pose RMSE across these longer sessions
+was 14.20, 11.77 and 13.87 cm respectively.
+
+The scan correction is conservative but **not a proven improvement**:
+on seed 7 it was less accurate than odometry alone. The short independent
+scenes are a smoke test, not a statistically strong reliability result,
+and the absence of falls is not a safety guarantee. Full structured
+evidence: `validation/visual_localization_v1.json`.
