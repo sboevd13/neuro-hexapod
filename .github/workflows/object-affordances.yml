@@ -27,35 +27,48 @@ jobs:
         run: |
           python -m unittest discover -s tests -p test_interaction.py -v
           python -m unittest discover -s tests -p test_curiosity.py -v
-      - name: Run four actual contact-physics object trials
-        run: python interact_laptop.py --seconds 8 --seed 7 --output runs/affordances
-      - name: Validate physics, observations and transfer
+      - name: Run contact-physics trials on six different robot initializations
+        run: |
+          for seed in 7 11 23 31 47 59; do
+            python interact_laptop.py --seconds 8 --seed "$seed" --output "runs/affordances/seed_$seed"
+          done
+      - name: Validate real movement, sensing, and transfer on every seed
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
-          d=json.loads(Path('runs/affordances/report.json').read_text())
-          trials=d['trials']
-          for t in trials:
-              print(t['case'], t['signature'], t['action'],
-                    'lidar delta', t['sensed_motion_m'],
-                    'truth delta', t['known_for_evaluation_only']['ground_truth_displacement_x_m'],
-                    'touch',t['touch'],'fell',t['fell'])
-          assert len(trials)==4
-          assert all(not t['fell'] for t in trials), 'Robot fell during contact experiment'
-          assert [t['signature'] for t in trials]==['narrow','wide','narrow','wide'], 'Object size signature mismatch'
-          assert trials[0]['action']=='probe'
-          assert trials[1]['action']=='probe'
-          # These assertions are deliberately strict: we must observe an
-          # actual MuJoCo contact and object movement before claiming learning.
-          assert trials[0]['touch'], 'Light box not reached / touched'
-          assert trials[0]['known_for_evaluation_only']['ground_truth_displacement_x_m'] > 0.035, 'Light box did not physically move'
-          assert trials[0]['sensed_motion_m'] is not None and trials[0]['sensed_motion_m']>0.025, 'Lidar failed to perceive object movement'
-          assert trials[1]['touch'], 'Fixed box not touched'
-          assert abs(trials[1]['known_for_evaluation_only']['ground_truth_displacement_x_m'])<0.001, 'Fixed box moved'
-          assert trials[1]['sensed_motion_m'] is not None and abs(trials[1]['sensed_motion_m'])<0.035, 'Lidar falsely classifies fixed box as movable'
-          assert trials[2]['action']=='probe', 'Did not transfer small object affordance'
-          assert trials[3]['action']=='observe', 'Did not avoid a second known fixed box'
+          from statistics import mean
+          seeds=[7,11,23,31,47,59]
+          reports=[]
+          for seed in seeds:
+              d=json.loads(Path(f'runs/affordances/seed_{seed}/report.json').read_text())
+              a,b,c,e=d['trials']
+              reports.append(d)
+              assert not any(x['fell'] for x in (a,b,c,e)), f'Fall: seed {seed}'
+              assert [x['signature'] for x in (a,b,c,e)]==['narrow','wide','narrow','wide'], f'Signature: seed {seed}'
+              assert [x['action'] for x in (a,b,c,e)]==['probe','probe','probe','observe'], f'Transfer: seed {seed}'
+              assert a['touch'] and b['touch'] and c['touch'], f'Missing physical probe: seed {seed}'
+              assert not e['touch'], f'Unwanted observation contact: seed {seed}'
+              for x in (a,c):
+                  gt=x['known_for_evaluation_only']['ground_truth_displacement_x_m']
+                  s=x['sensed_motion_m']
+                  assert gt>0.035 and s is not None and s>0.025, f'Box not physically moved/perceived: seed {seed}'
+                  assert abs(s-gt)<0.05, f'Sensor disagreement: seed {seed}'
+              assert abs(b['known_for_evaluation_only']['ground_truth_displacement_x_m'])<0.001
+              assert b['sensed_motion_m'] is not None and abs(b['sensed_motion_m'])<0.035
+              print('seed',seed,'new small box delta',c['sensed_motion_m'],
+                    'new large box action',e['action'])
+          stats={
+              'n_seeds':len(seeds), 'n_trials':len(seeds)*4,
+              'small_moved_trials':2*len(seeds),
+              'large_avoidance_trials':len(seeds),
+              'falls':0,
+              'mean_first_small_movement_m':round(mean(d['trials'][0]['sensed_motion_m'] for d in reports),5),
+              'mean_new_small_movement_m':round(mean(d['trials'][2]['sensed_motion_m'] for d in reports),5),
+              'world':'MuJoCo 3.2.7; V5 reference; idealized range and touch',
+          }
+          Path('runs/affordances/summary.json').write_text(json.dumps(stats,indent=2)+'\n')
+          print('AGGREGATE',stats)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
