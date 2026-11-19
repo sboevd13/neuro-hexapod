@@ -150,3 +150,21 @@ python evaluate_laptop.py --reference
 22/22 проверки. Resume и шесть регрессионных тестов также прошли.
 Полные метрики: [validation/laptop_v3_cpu.json](validation/laptop_v3_cpu.json).
 Это результат проверочного запуска, не замер скорости на пользовательской RTX 3060.
+
+## Эксперимент: нейросеть поведения (не заменяет V5/PPO)
+
+В `feature/learned-behavior-v1` добавлен дополнительный обучаемый модуль
+для локального выбора «вперёд / повернуть влево / повернуть вправо»,
+а также запись награды после реального шага MuJoCo и отдельное дообучение
+по собранным примерам. **По умолчанию модуль выключен:** обычная навигация
+остаётся надёжнее по числу столкновений в проверенных сценариях.
+
+```bash
+python explore_laptop.py --reference --seconds 90 --seed 7 --view
+python explore_laptop.py --reference --seconds 90 --seed 7 \
+  --behavior-model models/behavior_v1.json --view
+```
+
+Сравнение 6 невиденных сцен: baseline 64,90% карты и 0 контактов;
+дообученная сеть 65,04% и 1 контакт. Значимого преимущества пока нет.
+См. `docs/behavior.md` и `validation/autonomy_behavior_v1.json`.

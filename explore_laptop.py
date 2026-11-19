@@ -44,6 +44,8 @@ def parse_args():
     p.add_argument('--speed', type=float, default=1.0, help='Viewer playback speed')
     p.add_argument('--output', type=Path, default=Path('runs/autonomy'))
     p.add_argument('--continue-map', action='store_true', help='Load the saved map for this seed')
+    p.add_argument('--behavior-model', type=Path, help='Optional trained local action-value model')
+    p.add_argument('--record-experience', action='store_true', help='Store rewards from executed neural decisions')
     args = p.parse_args()
     if args.seconds <= 0 or args.speed <= 0 or not 0 <= args.obstacles <= 12:
         p.error('seconds/speed must be positive; obstacles must be in 0..12')
@@ -71,6 +73,20 @@ def main():
     else:
         memory = OccupancyMemory()
     explorer = FrontierExplorer(memory)
+    behavior = None
+    if args.behavior_model:
+        from autonomy.behavior import BehaviorModel
+        behavior = BehaviorModel.load(args.behavior_model)
+        print(f'Behavior model: {args.behavior_model} (frozen evaluation)')
+    if args.record_experience and behavior is None:
+        raise ValueError('--record-experience requires --behavior-model')
+    from autonomy.experience import experience_reward, save_experiences
+    experience_rows = []
+    pending_experience = None
+    neural_decisions = 0
+    neural_overrides = 0
+    last_neural_action = None
+    repeated_turns = 0
     args.output.mkdir(parents=True, exist_ok=True)
     previous_xy = env.data.qpos[:2].copy()
     collisions = 0
@@ -95,6 +111,20 @@ def main():
             if viewer is not None and not viewer.is_running():
                 ended = 'viewer_closed'
                 break
+            # Settle the last neural action's reward using what the MuJoCo body
+            # actually did, not the reward predicted during 2D pretraining.
+            if pending_experience is not None and (t % 15 == 0 or recovery_steps > 0):
+                current_xy = env.data.qpos[:2].copy()
+                current_yaw = math.atan2(2*(env.data.qpos[3]*env.data.qpos[6] +
+                                            env.data.qpos[4]*env.data.qpos[5]),
+                                         1-2*(env.data.qpos[5]**2 + env.data.qpos[6]**2))
+                event = pending_experience
+                reward = experience_reward(event['start_xy'], current_xy,
+                         event['start_yaw'], current_yaw, event['waypoint'],
+                         collisions-event['contacts'])
+                experience_rows.append(dict(features=event['features'],
+                             action=event['action'],reward=reward,scene_seed=args.seed))
+                pending_experience = None
             # Planner runs at about 3.3 Hz; locomotion controller stays at 50 Hz.
             if t % 15 == 0 and recovery_steps == 0:
                 xy = env.data.qpos[:2].copy()  # SIMULATOR TRUTH (replace with SLAM)
@@ -103,7 +133,36 @@ def main():
                                  1 - 2 * (env.data.qpos[5]**2 + env.data.qpos[6]**2))
                 ranges, hits = range_scan(xy, yaw, scene.obstacles)
                 memory.observe(xy, yaw, ranges, hits)
-                command, decision, _ = explorer.command(xy, yaw)
+                command, decision, waypoint = explorer.command(xy, yaw)
+                if behavior is not None and waypoint is not None:
+                    from autonomy.behavior import ACTIONS, state_features
+                    # Use the trained local reflex only near uncertain obstacles.
+                    # Keep global frontier planning and a hard minimum clearance.
+                    if min(ranges[10:13]) < 0.68:
+                        candidate = behavior.choose(
+                            state_features(ranges, yaw, xy, waypoint), ranges)
+                        neural_decisions += 1
+                        # Prevent repeated neural turning from immobilizing navigation.
+                        if candidate != 0:
+                            repeated_turns = repeated_turns+1 if candidate == last_neural_action else 1
+                        else:
+                            repeated_turns = 0
+                        last_neural_action = candidate
+                        # Keep planner rotations for large heading errors.
+                        error = math.atan2(waypoint[1]-xy[1], waypoint[0]-xy[0]) - yaw
+                        error = math.atan2(math.sin(error), math.cos(error))
+                        if (abs(error) < 0.60 and repeated_turns <= 6):
+                            learned_command = np.array(ACTIONS[candidate], dtype=float)
+                            if not np.allclose(learned_command, command):
+                                neural_overrides += 1
+                            command, decision = learned_command, 'neural'
+                            if args.record_experience:
+                                pending_experience = dict(features=state_features(ranges, yaw, xy, waypoint).tolist(),
+                                    action=int(candidate),start_xy=xy.copy(),start_yaw=yaw,
+                                    waypoint=np.asarray(waypoint).copy(),contacts=collisions)
+                    else:
+                        repeated_turns = 0
+                        last_neural_action = None
                 if decision == 'complete':
                     ended = 'explored_known_space'
                     break
@@ -154,6 +213,17 @@ def main():
                 ended = 'fall' if terminated else 'time_limit'
                 break
     finally:
+        if pending_experience is not None:
+            event = pending_experience
+            xy = env.data.qpos[:2].copy()
+            yaw = math.atan2(2*(env.data.qpos[3]*env.data.qpos[6] + env.data.qpos[4]*env.data.qpos[5]),
+                             1-2*(env.data.qpos[5]**2 + env.data.qpos[6]**2))
+            experience_rows.append(dict(features=event['features'],action=event['action'],
+                reward=experience_reward(event['start_xy'],xy,event['start_yaw'],yaw,
+                                         event['waypoint'],collisions-event['contacts']),
+                scene_seed=args.seed))
+        if args.record_experience:
+            save_experiences(args.output/'experience.jsonl',experience_rows)
         if viewer is not None:
             viewer.close()
         memory.save(map_path, scene_seed=args.seed)
@@ -165,6 +235,9 @@ def main():
             'coverage': round(memory.coverage, 5),
             'mapped_cells': int(np.count_nonzero(memory.cells != memory.UNKNOWN)),
             'goal_changes': explorer.goals_reached, 'sensor_surveys': memory.survey_count,
+            'neural_decisions': neural_decisions, 'neural_overrides': neural_overrides,
+            'recorded_experiences': len(experience_rows),
+            'behavior': 'trained_local_value' if behavior is not None else 'frontier_baseline',
             'localization': 'simulator_ground_truth', 'sensor': 'idealized_planar_ranges',
         }
         (args.output / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n')
