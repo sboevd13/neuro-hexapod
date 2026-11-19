@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "experiment": "Temporal Double DQN from sequential MuJoCo navigation transitions",
+  "run_url": "https://github.com/sboevd13/neuro-hexapod/actions/runs/44534101250",
+  "training": {
+    "train_baseline_seeds": [
+      7,
+      11,
+      23,
+      31,
+      41,
+      53
+    ],
+    "experience_seeds": [
+      13,
+      19,
+      29,
+      37
+    ],
+    "macro_seconds": 0.3,
+    "replay_transitions": 1328,
+    "gamma": 0.96,
+    "iterations_final_stage": 55,
+    "model_checkpoint": "models/temporal_q_experimental.json"
+  },
+  "evaluation": [
+    {
+      "group": "eval",
+      "seeds": [
+        47,
+        59,
+        71,
+        83,
+        97,
+        109
+      ],
+      "seconds": 60.0,
+      "baseline": {
+        "n": 6,
+        "mean_coverage": 0.64896,
+        "min_coverage": 0.60625,
+        "max_coverage": 0.70937,
+        "total_contacts": 0,
+        "episodes_with_contacts": 0,
+        "falls": 0,
+        "mean_traveled_m": 6.5478,
+        "mean_goal_changes": 7.17
+      },
+      "temporal": {
+        "n": 6,
+        "mean_coverage": 0.64646,
+        "min_coverage": 0.60625,
+        "max_coverage": 0.70937,
+        "total_contacts": 0,
+        "episodes_with_contacts": 0,
+        "falls": 0,
+        "mean_traveled_m": 6.4507,
+        "mean_goal_changes": 7
+      },
+      "temporal_decisions": 76,
+      "temporal_overrides": 2
+    },
+    {
+      "group": "validation",
+      "seeds": [
+        113,
+        127,
+        139,
+        149,
+        163,
+        179
+      ],
+      "seconds": 60.0,
+      "baseline": {
+        "n": 6,
+        "mean_coverage": 0.66937,
+        "min_coverage": 0.57937,
+        "max_coverage": 0.72062,
+        "total_contacts": 0,
+        "episodes_with_contacts": 0,
+        "falls": 0,
+        "mean_traveled_m": 6.4982,
+        "mean_goal_changes": 11
+      },
+      "temporal": {
+        "n": 6,
+        "mean_coverage": 0.66937,
+        "min_coverage": 0.57937,
+        "max_coverage": 0.72062,
+        "total_contacts": 0,
+        "episodes_with_contacts": 0,
+        "falls": 0,
+        "mean_traveled_m": 6.4982,
+        "mean_goal_changes": 11
+      },
+      "temporal_decisions": 115,
+      "temporal_overrides": 0
+    }
+  ],
+  "limitation": "The model is optional, uses ideal planar rays and simulator-ground-truth pose with V5 reference gait. It did not improve mapped-area coverage over the frontier planner; do not replace the baseline."
+}

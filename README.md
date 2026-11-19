@@ -168,3 +168,18 @@ python explore_laptop.py --reference --seconds 90 --seed 7 \
 Сравнение 6 невиденных сцен: baseline 64,90% карты и 0 контактов;
 дообученная сеть 65,04% и 1 контакт. Значимого преимущества пока нет.
 См. `docs/behavior.md` и `validation/autonomy_behavior_v1.json`.
+
+## Последовательное обучение поведения (эксперимент)
+
+На ветке `feature/temporal-q-learning` доступен опциональный Double DQN,
+обучающийся на переходах, записанных во время движения в MuJoCo.
+Базовая навигация остаётся режимом по умолчанию: новая сеть не показала
+преимущества по покрытию карты. Команды ограничиваются безопасным планировщиком.
+
+```bash
+python explore_laptop.py --reference --seed 47 --seconds 90 \
+  --temporal-model models/temporal_q_experimental.json --view
+```
+
+Протокол: [docs/temporal.md](docs/temporal.md),
+[validation/temporal_q_v1.json](validation/temporal_q_v1.json).
