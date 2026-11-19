@@ -183,3 +183,23 @@ python explore_laptop.py --reference --seed 47 --seconds 90 \
 
 Протокол: [docs/temporal.md](docs/temporal.md),
 [validation/temporal_q_v1.json](validation/temporal_q_v1.json).
+
+## Любопытство к объектам (эксперимент)
+
+Ветка `feature/object-curiosity-v1` добавляет поиск отдельных объектов
+по дальномерным лучам, безопасные точки осмотра, запоминание успешных
+исследований и снижение интереса к уже исследованным предметам.
+**По умолчанию прежняя навигация не меняется.**
+
+```bash
+python explore_laptop.py --reference --seed 7 --seconds 90 \
+  --curiosity --view --output runs/curiosity/demo
+```
+
+Проверено 12 комнат в MuJoCo: 42 осмотра, 0 столкновений, 0 падений;
+покрытие 65,1% против 67,8% при обычной разведке. Это эксперимент с
+идеализированным дальномером и позой из симулятора, **не** полноценная
+камера, манипуляция предметами или физическое развёртывание.
+
+Подробности: [docs/curiosity.md](docs/curiosity.md),
+[validation/object_curiosity_v1.json](validation/object_curiosity_v1.json).

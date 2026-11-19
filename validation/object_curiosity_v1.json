@@ -1,0 +1,82 @@
+{
+  "experiment": "Curiosity-driven range-object inspection with persistent novelty memory",
+  "validated_at": "2026-11-19",
+  "ci_run_url": "https://github.com/sboevd13/neuro-hexapod/actions/runs/44539470038",
+  "physics": "MuJoCo native; 60 simulated seconds per seed",
+  "robot_control": "reference V5 only, not PPO checkpoint",
+  "sensors": "23 idealized planar range beams; world pose from simulator truth",
+  "object_sensing": "range-endpoint clusters without simulator object IDs; static box obstacles",
+  "objects_per_scene": 5,
+  "groups": [
+    {
+      "seeds": [
+        7,
+        11,
+        23,
+        31,
+        47,
+        59
+      ],
+      "baseline": {
+        "mapped_fraction_mean": 0.69438,
+        "contacts": 0,
+        "falls": 0
+      },
+      "curiosity": {
+        "mapped_fraction_mean": 0.66146,
+        "contacts": 0,
+        "falls": 0,
+        "objects_detected_hypotheses": 30,
+        "inspections": 19,
+        "attempts": 30,
+        "object_directed_commands": 404,
+        "intrinsic_reward_total": 18.758
+      }
+    },
+    {
+      "seeds": [
+        71,
+        83,
+        97,
+        109,
+        113,
+        127
+      ],
+      "baseline": {
+        "mapped_fraction_mean": 0.66156,
+        "contacts": 0,
+        "falls": 0
+      },
+      "curiosity": {
+        "mapped_fraction_mean": 0.63969,
+        "contacts": 0,
+        "falls": 0,
+        "objects_detected_hypotheses": 29,
+        "inspections": 23,
+        "attempts": 31,
+        "object_directed_commands": 465,
+        "intrinsic_reward_total": 24.487
+      }
+    }
+  ],
+  "aggregate": {
+    "scenes": 12,
+    "baseline_mapped_fraction_mean": 0.67797,
+    "curiosity_mapped_fraction_mean": 0.650575,
+    "contacts": 0,
+    "falls": 0,
+    "object_hypotheses": 59,
+    "inspections": 42,
+    "attempts": 61,
+    "object_directed_commands": 869,
+    "intrinsic_reward_total": 43.245
+  },
+  "limitations": [
+    "Object hypotheses may split or merge because they rely on sparse planar range beams",
+    "Object inspection is safe observation at distance, not touching, manipulation, or learning new motor skills",
+    "Memory adapts object priority from outcomes; no semantic vision or end-to-end RL of object interaction",
+    "World pose and contact point are provided by simulation, not physical sensors",
+    "Success on 12 fixed random seeds is not a safety guarantee",
+    "Curiosity reduces space coverage compared with pure frontier exploration"
+  ]
+}
