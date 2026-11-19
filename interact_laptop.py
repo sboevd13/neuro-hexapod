@@ -11,6 +11,7 @@ import argparse
 from dataclasses import dataclass, replace
 import json
 import math
+import time
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -87,15 +88,14 @@ def touching_target(env, geom_id):
         c=data.contact[k]
         if geom_id in (int(c.geom1),int(c.geom2)):
             other = int(c.geom2) if int(c.geom1) == geom_id else int(c.geom1)
-            # Contact with the floor is persistent and is not a robot touch.
-            if (int(env.model.geom_bodyid[other]) != 0 and
-                    int(env.model.geom_bodyid[other]) !=
-                    int(env.model.geom_bodyid[geom_id])):
+            # The target rests on the ground at all times. Floor contact is
+            # NOT a touch by the robot. Only geoms on robot bodies qualify.
+            if int(env.model.geom_bodyid[other]) != 0 and int(env.model.geom_bodyid[other]) != int(env.model.geom_bodyid[geom_id]):
                 return True
     return False
 
 
-def run_trial(trial, memory, seed=7, seconds=8.0, contact_seconds=0.65):
+def run_trial(trial, memory, seed=7, seconds=8.0, contact_seconds=0.65, view=False, speed=1.0):
     model=load_model(interaction_scene(MODEL_PATH.read_text(),trial))
     env=LocomotionEnv(replace(Config(),episode_seconds=seconds+2),model)
     env.reset([0,0,0],seed=seed)
@@ -108,6 +108,26 @@ def run_trial(trial, memory, seed=7, seconds=8.0, contact_seconds=0.65):
     choice=memory.choose(sign)
     if sign is None or front is None:
         raise RuntimeError('Target not seen by idealized initial range scan')
+    viewer=None
+    deadline=time.perf_counter()
+    if view:
+        import mujoco.viewer
+        viewer=mujoco.viewer.launch_passive(model,env.data)
+        viewer.cam.distance=1.2
+        viewer.cam.azimuth=135
+        viewer.cam.elevation=-35
+    def draw():
+        nonlocal deadline
+        if viewer is None:
+            return
+        if not viewer.is_running():
+            raise KeyboardInterrupt('MuJoCo viewer closed')
+        viewer.cam.lookat[:]=env.data.qpos[:3]
+        viewer.sync()
+        deadline+=CONTROL_DT/speed
+        delay=deadline-time.perf_counter()
+        if delay>0:
+            time.sleep(delay)
     touches=0
     first_touch=None
     fallen=False
@@ -116,6 +136,7 @@ def run_trial(trial, memory, seed=7, seconds=8.0, contact_seconds=0.65):
     for t in range(frames):
         env.set_command([0.70,0,0] if choice=='probe' else [0,0,0])
         _,_,terminated,_,_=env.step(np.zeros(18))
+        draw()
         if touching_target(env,geom_id):
             touches+=1
             if first_touch is None: first_touch=t
@@ -129,8 +150,11 @@ def run_trial(trial, memory, seed=7, seconds=8.0, contact_seconds=0.65):
     if not fallen and choice=='probe':
         for _ in range(round(0.4/CONTROL_DT)):
             _,_,terminated,_,_=env.step(np.zeros(18))
+            draw()
             fallen=bool(terminated)
             if fallen: break
+    if viewer is not None:
+        viewer.close()
     final=target_scan(env,geom_id)
     surface=target_surface(*final)
     sensed=observed_motion(front,surface)
@@ -160,13 +184,18 @@ def main():
     p.add_argument('--output',type=Path,default=Path('runs/interaction'))
     p.add_argument('--seconds',type=float,default=8)
     p.add_argument('--seed',type=int,default=7)
+    p.add_argument('--view',action='store_true',help='Display actual MuJoCo physics for each trial')
+    p.add_argument('--speed',type=float,default=1.,help='Viewer playback speed')
     p.add_argument('--memory',type=Path,help='Load existing prior; otherwise begin new experiment')
     args=p.parse_args()
-    if args.seconds<=0: p.error('--seconds must be positive')
+    if args.seconds<=0 or args.speed<=0: p.error('--seconds and speed must be positive')
     memory=OutcomeMemory.load(args.memory) if args.memory else OutcomeMemory()
     results=[]
     for k,trial in enumerate(TRAINING+HELD_OUT):
-        row=run_trial(trial,memory,seed=args.seed+19*k,seconds=args.seconds)
+        if args.view:
+            print('VIEWING',trial.name,'--',memory.choose('narrow' if trial.half_y < .15 else 'wide'),flush=True)
+        row=run_trial(trial,memory,seed=args.seed+19*k,seconds=args.seconds,
+                      view=args.view,speed=args.speed)
         results.append(row)
         print(json.dumps({key:row[key] for key in ('case','signature','action','sensed_motion_m','touch','fell','learned','posterior_pushability','known_for_evaluation_only')},allow_nan=False),flush=True)
     args.output.mkdir(parents=True,exist_ok=True)

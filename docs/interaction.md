@@ -24,6 +24,8 @@ simulator/sensor adapter or the independent evaluator. The visual width classes
 
 ```bash
 python interact_laptop.py --seed 7 --seconds 8 --output runs/interaction
+# For visual inspection (four sequential MuJoCo scenes):
+python interact_laptop.py --seed 7 --seconds 8 --view --output runs/interaction/view
 ```
 
 Outputs: `runs/interaction/affordance_memory.json` (versioned experience),
