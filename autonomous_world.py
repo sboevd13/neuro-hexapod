@@ -167,7 +167,10 @@ def main():
                              'short_probe_movement_m':first_movement,
                              'predicted_probability':last_seen,
                              'label_meaningful_movement':label,
-                             'physics_time_s':round(env.steps*CONTROL_DT,3)})
+                             'physics_time_s':round(env.steps*CONTROL_DT,3),
+                             'robot_xy_at_end':np.asarray(env.data.qpos[:2]).round(4).tolist(),
+                             'robot_to_target_distance_m':round(float(np.linalg.norm(
+                                 np.asarray(env.data.qpos[:2]) - target)),4)})
             ignored.append(np.asarray(target_start if target_start is not None else target).copy())
         phase='retreat';phase_ticks=0
         target=None;target_start=None;short_features=None;first_movement=None
@@ -203,7 +206,7 @@ def main():
                 if object_contact(env,ids):
                     touches+=1
                     phase='short_probe';phase_ticks=0
-                elif phase_ticks>round(5.0/CONTROL_DT):
+                elif phase_ticks>round(12.0/CONTROL_DT):
                     finish_probe('object_not_reached')
             elif phase=='short_probe':
                 phase_ticks+=1

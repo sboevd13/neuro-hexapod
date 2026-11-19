@@ -42,7 +42,7 @@ jobs:
       - name: Continuous single-world autonomous investigation (3 seeds)
         run: |
           for seed in 7 11 23; do
-            python autonomous_world.py --seed "$seed" --seconds 75 \
+            python autonomous_world.py --seed "$seed" --seconds 90 \
               --model runs/embodied/model.json --output "runs/integrated/seed_$seed"
           done
       - name: Audit continuous MuJoCo session outcomes
