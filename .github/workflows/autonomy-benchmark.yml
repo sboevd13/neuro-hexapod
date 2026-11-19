@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/learned-behavior-v1
+      - agent/residual-reference-gait
   pull_request:
     paths:
       - 'autonomy/**'
@@ -52,11 +53,15 @@ jobs:
             --model models/behavior_v1.json \
             --experiences runs/benchmark/learned/seed_{7,11,23,31}/experience.jsonl \
             --output runs/benchmark/adapted_behavior.json
-      - name: Evaluate adapted model on two held-out scenes
+      - name: Baseline navigation on six held-out scenes
+        run: python benchmark_autonomy.py --mode baseline --seconds 60 --seeds 47 59 71 83 97 109 --output runs/heldout
+      - name: Original learned policy on six held-out scenes
+        run: python benchmark_autonomy.py --mode learned --behavior-model models/behavior_v1.json --seconds 60 --seeds 47 59 71 83 97 109 --output runs/heldout
+      - name: Adapted policy on six held-out scenes
         run: |
           python benchmark_autonomy.py --mode learned \
             --behavior-model runs/benchmark/adapted_behavior.json \
-            --seconds 60 --seeds 47 59 --output runs/adapted
+            --seconds 60 --seeds 47 59 71 83 97 109 --output runs/adapted
       - name: Show differences without hiding regressions
         run: |
           python - <<'PY'
@@ -69,6 +74,10 @@ jobs:
           print('LEARNED', learned)
           adapted=json.loads(Path('runs/adapted/learned_summary.json').read_text())['summary']
           print('ADAPTED HELD-OUT', adapted)
+          held_base=json.loads(Path('runs/heldout/baseline_summary.json').read_text())['summary']
+          held_learned=json.loads(Path('runs/heldout/learned_summary.json').read_text())['summary']
+          print('HELD-OUT BASELINE', held_base)
+          print('HELD-OUT ORIGINAL', held_learned)
           assert adapted['falls'] == 0, 'Adapted model fell on held-out scenes'
           assert learned['falls'] == 0, 'Regression: learned policy fell'
           interventions=sum(e['neural_decisions'] for e in json.loads((root/'learned_summary.json').read_text())['episodes'])
@@ -81,3 +90,4 @@ jobs:
           path: |
             runs/benchmark
             runs/adapted
+            runs/heldout
