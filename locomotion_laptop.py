@@ -119,7 +119,11 @@ def directional_reference(phase, command):
 def load_model(xml=None):
     xml = MODEL_PATH.read_text() if xml is None else xml
     model = mujoco.MjModel.from_xml_string(xml)
-    if model.nu != 18 or model.nq != 25:
+    experimental_prop = (
+        model.nq == 32 and
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
+                          'interaction_target_free') >= 0)
+    if model.nu != 18 or not (model.nq == 25 or experimental_prop):
         raise ValueError("Expected the 18-servo hexapod model")
     if model.opt.integrator != mujoco.mjtIntegrator.mjINT_IMPLICITFAST:
         raise ValueError("V3 requires the validated implicitfast integrator")
