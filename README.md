@@ -52,3 +52,35 @@ updates were completed in 3 continuous simulation rooms. These are limited
 research results, not proven real-world generalization. Ready-to-use model:
 `models/active_displacement_ensemble.json`; experiences:
 `models/active_push_replay.json`.
+
+
+## Camera-guided simulation, IMU and estimated pose (experimental)
+
+The `feature/visual-slam-simulation` branch mounts a **real rendered MuJoCo
+RGB+depth camera**, simulated noisy gyro and range beams, and estimated
+position from relative foot kinematics, contact and local map scan matching.
+The navigation planner receives the estimated position instead of the
+ground-truth MuJoCo robot coordinates. All changes are opt-in.
+
+```bash
+python visual_autonomy.py --seed 7 --seconds 60 --view --output runs/camera_demo
+
+python autonomous_world.py --seed 11 --seconds 90 --vision-odometry \
+  --experiment-model models/active_displacement_ensemble.json \
+  --experiment-experience models/active_push_replay.json \
+  --view --output runs/camera_embodied
+```
+
+Three 22-second MuJoCo rooms had ~**6.7 cm mean position RMSE** with
+scan correction (versus 6.8 cm using foot/IMU dead reckoning). The
+correction is **not consistently better in each room**. The camera produced
+75 RGB frames with 113 coarse color-object detections. In three additional
+continuous rooms, the robot made four object contacts and three extra
+gentle pushes, with three online learning updates and no falls.
+
+This is **not full visual SLAM or general object recognition**: depth and
+color are still from simulated sensors, the props are deliberately cyan,
+there is no optical-flow odometry or loop closure, and physical hardware
+has not been connected. See
+[docs/visual_navigation.md](docs/visual_navigation.md),
+[validation/visual_localization_v1.json](validation/visual_localization_v1.json).

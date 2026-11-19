@@ -1,0 +1,121 @@
+name: Visual sensor localization in MuJoCo
+on:
+  push:
+    branches: [feature/visual-slam-simulation]
+  pull_request:
+    paths:
+      - 'visual_autonomy.py'
+      - 'autonomy/sim_perception.py'
+      - 'autonomy/localization.py'
+      - 'tests/test_sim_perception.py'
+      - '.github/workflows/visual-localization.yml'
+
+jobs:
+  camera-and-localization:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENBLAS_NUM_THREADS: '1'
+      MUJOCO_GL: osmesa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install MuJoCo rendering dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libosmesa6 libgl1-mesa-dri
+          python -m pip install 'mujoco==3.2.7' 'numpy>=1.26,<3' 'PyOpenGL>=3.1.7'
+      - name: Test simulated sensors, object detection and foot odometry
+        run: python -m unittest discover -s tests -p 'test_sim_perception.py' -v
+      - name: Test camera and estimated-pose navigation on three rooms
+        run: |
+          for seed in 7 11 23; do
+            python visual_autonomy.py --seed "$seed" --seconds 22 --camera-every 45 --output "runs/visual/estimated_$seed"
+          done
+      - name: Independent odometry-only and simulator truth controls
+        run: |
+          for seed in 7 11 23; do
+            python visual_autonomy.py --seed "$seed" --seconds 22 --camera-every 90 --localization odometry --output "runs/visual/odometry_$seed"
+          done
+          python visual_autonomy.py --seed 7 --seconds 22 --camera-every 90 --localization oracle --output runs/visual/oracle_7
+      - name: Integrated camera, mapping and active physical curiosity
+        run: |
+          python autonomous_world.py --seed 11 --seconds 55 --vision-odometry \
+            --camera-every 65 \
+            --experiment-model models/active_displacement_ensemble.json \
+            --experiment-experience models/active_push_replay.json \
+            --output runs/visual/integrated_11
+          python - <<'PYINTEGRATED'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('runs/visual/integrated_11/report.json').read_text())
+          print('RGB_INTEGRATION',s['rgb_camera_frames'],s['rgb_object_detections'],
+                s['visual_pose_rmse_m'],s['physical_touches'],s['active_network_updates'])
+          assert s['vision_odometry'] and not s['controller_uses_simulator_pose']
+          assert s['rgb_camera_frames']>=10
+          assert s['rgb_object_detections']>0
+          assert s['foot_odometry_updates']>10
+          assert s['sensor_surveys']>=30
+          assert s['termination']!='fall'
+          assert Path('runs/visual/integrated_11/rgb_first.png').read_bytes().startswith(b'\x89PNG')
+          PYINTEGRATED
+      - name: Additional continuous physical experiments with camera pose
+        run: |
+          for seed in 7 23; do
+            python autonomous_world.py --seed "$seed" --seconds 80 --vision-odometry \
+              --camera-every 95 --exploration-weight 3.0 \
+              --experiment-model models/active_displacement_ensemble.json \
+              --experiment-experience models/active_push_replay.json \
+              --output "runs/visual/integrated_$seed"
+          done
+          python - <<'PYEXPERIMENT'
+          import json
+          from pathlib import Path
+          rows=[]
+          for seed in (7,23):
+              x=json.loads(Path(f'runs/visual/integrated_{seed}/report.json').read_text())
+              assert x['vision_odometry'] and not x['controller_uses_simulator_pose']
+              assert x['termination']!='fall'
+              assert x['rgb_camera_frames']>=20 and x['rgb_object_detections']>0
+              rows.append({'seed':seed,'physical_touches':x['physical_touches'],
+                           'updates':x['active_network_updates'],
+                           'active_choices':x['active_choices'],
+                           'mapped_fraction':x['map_coverage'],
+                           'position_rmse_m':x['visual_pose_rmse_m']})
+          print('VISION_PHYSICAL',json.dumps(rows))
+          PYEXPERIMENT
+      - name: Audit real rendered camera frames and simulated localization
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=[]
+          for seed in [7,11,23]:
+              a=json.loads(Path(f'runs/visual/estimated_{seed}/metrics.json').read_text())
+              b=json.loads(Path(f'runs/visual/odometry_{seed}/metrics.json').read_text())
+              assert a['termination']!='fall', f'Fell in scene {seed}'
+              assert a['camera_frames']>=12, 'No real camera stream'
+              assert a['scan_count']>=50, 'No scanner stream'
+              assert a['foot_odometry_updates']>5, 'Foot proprioception not used'
+              assert a['mapped_fraction']>0.15, 'No real occupancy mapping'
+              assert a['position_rmse_m'] is not None
+              assert not a['controller_world_truth']
+              assert Path(f'runs/visual/estimated_{seed}/camera_first.png').read_bytes().startswith(b'\x89PNG')
+              report.append({'seed':seed,'camera_frames':a['camera_frames'],
+                             'objects_seen_in_rgb':a['visual_detections'],
+                             'estimated_rmse_m':a['position_rmse_m'],
+                             'dead_reckoning_rmse_m':b['position_rmse_m'],
+                             'scan_matching_updates':a['scan_matching_corrections'],
+                             'coverage':a['mapped_fraction']})
+          assert sum(x['objects_seen_in_rgb'] for x in report)>0, 'Camera saw no actual world objects'
+          Path('runs/visual/validation.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('VISUAL_VALIDATION',json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-localization-mujoco-evidence
+          path: runs/visual
+          if-no-files-found: warn
