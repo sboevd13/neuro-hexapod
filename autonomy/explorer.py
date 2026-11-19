@@ -110,6 +110,12 @@ class OccupancyMemory:
             self.visits[here] += 1
         self.survey_count += 1
 
+    def mark_contact(self, xy):
+        """Record the actual simulator contact position as an obstacle."""
+        idx = self.cell(xy)
+        if idx is not None:
+            self.cells[idx] = self.OCCUPIED
+
     def mark_bump(self, xy, yaw, distance=0.20):
         """Remember an unexpected contact/stall as a blocked location."""
         idx = self.cell(np.asarray(xy) + distance * np.array([math.cos(yaw), math.sin(yaw)]))
@@ -173,7 +179,7 @@ class FrontierExplorer:
     new scan changes the map and therefore the selected trajectory.
     """
 
-    def __init__(self, memory, clearance=0.17):
+    def __init__(self, memory, clearance=0.29):
         self.memory = memory
         self.clearance = float(clearance)
         self.goal = None

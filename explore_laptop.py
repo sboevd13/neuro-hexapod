@@ -22,14 +22,14 @@ from locomotion_laptop import CONTROL_DT, Config, LocomotionEnv, MODEL_PATH, loa
 
 
 def contact_with_obstacle(model, data):
-    """A contact is visible to metrics, not injected into the range sensor."""
+    """Return the first scene obstacle contact position for recovery/metrics."""
     for i in range(data.ncon):
         c = data.contact[i]
         for gid in (int(c.geom1), int(c.geom2)):
             name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ''
             if name.startswith('nav_obstacle_'):
-                return True
-    return False
+                return np.asarray(c.pos[:2], dtype=float).copy()
+    return None
 
 
 def parse_args():
@@ -77,6 +77,8 @@ def main():
     last_contact = False
     traveled = 0.0
     command = np.zeros(3)
+    recovery_command = np.zeros(3)
+    recovery_steps = 0
     decision = 'scan'
     viewer = None
     if args.view:
@@ -94,7 +96,7 @@ def main():
                 ended = 'viewer_closed'
                 break
             # Planner runs at about 3.3 Hz; locomotion controller stays at 50 Hz.
-            if t % 15 == 0:
+            if t % 15 == 0 and recovery_steps == 0:
                 xy = env.data.qpos[:2].copy()  # SIMULATOR TRUTH (replace with SLAM)
                 yaw = math.atan2(2 * (env.data.qpos[3] * env.data.qpos[6] +
                                       env.data.qpos[4] * env.data.qpos[5]),
@@ -109,20 +111,36 @@ def main():
                     print(f's={t*CONTROL_DT:.1f} position={xy.round(2)} '
                           f'coverage={memory.coverage:.1%} action={decision} '
                           f'contacts={collisions}', flush=True)
-            env.set_command(command)
+            # A contact triggers a short escape maneuver, not endless spinning
+            # inside an inflated obstacle cell. This is still simulation-only.
+            if recovery_steps > 0:
+                env.set_command(recovery_command)
+                recovery_steps -= 1
+            else:
+                env.set_command(command)
             action = np.zeros(18) if policy is None else policy.act(obs[None])[0][0]
             obs, _, terminated, truncated, _ = env.step(action)
             now_xy = env.data.qpos[:2].copy()
             traveled += float(np.linalg.norm(now_xy - previous_xy))
             previous_xy = now_xy
-            touching = contact_with_obstacle(model, env.data)
+            contact_xy = contact_with_obstacle(model, env.data)
+            touching = contact_xy is not None
             if touching and not last_contact:
                 collisions += 1
                 yaw = math.atan2(2*(env.data.qpos[3]*env.data.qpos[6] +
                                     env.data.qpos[4]*env.data.qpos[5]),
                                  1-2*(env.data.qpos[5]**2+env.data.qpos[6]**2))
-                memory.mark_bump(now_xy, yaw)
+                memory.mark_contact(contact_xy)
                 explorer.goal = None
+                away = now_xy - contact_xy
+                magnitude = np.linalg.norm(away)
+                if magnitude > 1e-5:
+                    away = 0.7 * away / magnitude
+                    recovery_command = np.array([
+                        math.cos(yaw)*away[0] + math.sin(yaw)*away[1],
+                        -math.sin(yaw)*away[0] + math.cos(yaw)*away[1], 0.])
+                    recovery_steps = 40
+                    decision = 'recover'
             last_contact = touching
             if viewer is not None:
                 viewer.cam.lookat[:] = env.data.qpos[:3]
