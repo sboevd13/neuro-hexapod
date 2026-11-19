@@ -1,0 +1,83 @@
+name: Active physical experiment selection
+on:
+  push:
+    branches:
+      - feature/active-experiment-learning
+  pull_request:
+    paths:
+      - autonomy/active_experiments.py
+      - active_learning_benchmark.py
+      - autonomous_world.py
+      - tests/test_active_experiments.py
+      - .github/workflows/active-learning.yml
+jobs:
+  active-learning-physics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install MuJoCo and NumPy
+        run: python -m pip install 'mujoco==3.2.7' 'numpy>=1.26,<3'
+      - name: Check active strategy model and no privileged inputs
+        run: python -m unittest discover -s tests -p test_active_experiments.py -v
+      - name: Recreate 260 physical experiments and compare 3 acquisition strategies
+        run: |
+          python active_learning_benchmark.py \
+            --pool-size 200 --test-size 60 --budgets 8 16 32 64 \
+            --members 4 --steps 65 --output runs/active
+      - name: Audit physical benchmark and regressions
+        run: |
+          python - <<'PY'
+          import json, math
+          from pathlib import Path
+          from autonomy.active_experiments import OutcomeEnsemble
+          r=json.loads(Path('runs/active/report.json').read_text())
+          print('ACTIVE_PHYSICAL_BENCHMARK',json.dumps(r['aggregate']))
+          print('FULL_POOL_METRICS',r['full_pool_metrics'])
+          assert r['pool_candidates']>=170 and r['independent_test_examples']>=50
+          assert len(r['aggregate'])==12
+          assert r['cost_metric']=='number of labeled second-stage pushes'
+          assert all(0 <= d['mean_mae_m'] <= .30 and math.isfinite(d['mean_mae_m']) for d in r['aggregate'])
+          net=OutcomeEnsemble.load('runs/active/active_world_model.json')
+          assert len(net.members)==4
+          for path in ('runs/active/pool/sensor_labels.json', 'runs/active/held_out/sensor_labels.json'):
+              clean=json.loads(Path(path).read_text())
+              assert all(set(x)=={'features','displacement_m','action_seconds'} for x in clean)
+          PY
+      - name: Verify integrated autonomous world with opt-in active experiment choices
+        run: |
+          for seed in 7 11 23; do
+            python autonomous_world.py --seed "$seed" --seconds 90 \
+              --model models/affordance_outcome_experimental.json \
+              --experience models/affordance_training_experiences.json \
+              --experiment-model runs/active/active_world_model.json \
+              --experiment-experience runs/active/pool/sensor_labels.json \
+              --exploration-weight 2.0 --output "runs/active/world_seed_$seed"
+          done
+      - name: Audit integrated actions and online model persistence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows=[json.loads(Path(f'runs/active/world_seed_{s}/report.json').read_text()) for s in (7,11,23)]
+          for r in rows:
+              print('INTEGRATED_ACTIVE',r['seed'],
+                    'choices',r['active_choices'],
+                    'updates',r['active_network_updates'],
+                    'touches',r['physical_touches'],
+                    'new_labels',r['active_new_labeled_samples'])
+              assert r['termination'] != 'fall'
+              assert Path(f"runs/active/world_seed_{r['seed']}/active_predictor.json").exists()
+          assert sum(len(r['active_choices']) for r in rows)>0
+          assert sum(r['active_network_updates'] for r in rows)>0, 'No online update after experimental probes'
+          assert sum(r['active_new_labeled_samples'] for r in rows)>0, 'No newly learned object outcomes'
+          assert all(r['active_pushes']<=2 for r in rows), 'Physical experiment budget exceeded'
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: active-physical-experiment-evidence
+          path: runs/active/
