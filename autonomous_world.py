@@ -148,6 +148,7 @@ def main():
     initial_active_samples=len(active_entries)
     active_updates=0
     active_choices=[]
+    active_pushes=0
     second_duration=.48
     active_choice=None
     attempts=[]
@@ -257,11 +258,12 @@ def main():
                         short_features=features(apparent,start_range,first_movement,True)
                         if active_network is not None:
                             active_choice=choose_action(active_network,short_features,
-                                safety_ok=bool(env.data.qpos[2]>.075),
+                                safety_ok=bool(env.data.qpos[2]>.075 and active_pushes<2),
                                 novelty_weight=args.exploration_weight)
                             active_choices.append(dict(active_choice))
                             last_seen=None
                             should_push=active_choice['action']!='observe'
+                            if should_push: active_pushes += 1
                             second_duration=float(active_choice['duration'])
                         else:
                             last_seen=float(network.predict(short_features))
@@ -319,6 +321,7 @@ def main():
                 'online_network_updates':online_updates,
                 'active_network_updates':active_updates,
                 'active_choices':active_choices,
+                'active_pushes':active_pushes,
                 'active_prior_samples':initial_active_samples,
                 'active_new_labeled_samples':len(active_entries)-initial_active_samples,
                 'properties_for_audit_only':audit,

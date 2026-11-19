@@ -69,6 +69,16 @@ class ActiveExperimentTests(unittest.TestCase):
         self.assertIn(decision['action'],('observe','gentle_push','long_push'))
         self.assertIn(decision['duration'],(0.,*ACTION_DURATIONS))
 
+    def test_epistemic_probe_is_gentle_and_safety_bounded(self):
+        class DisagreeingEnsemble:
+            def predict(self, xs):
+                return np.array([-.03,-.04]),np.array([.008,.009])
+        probe=choose_action(DisagreeingEnsemble(),self.x[0,:5],novelty_weight=2.)
+        self.assertEqual(probe['action'],'gentle_push')
+        self.assertEqual(probe['duration'],ACTION_DURATIONS[0])
+        veto=choose_action(DisagreeingEnsemble(),self.x[0,:5],safety_ok=False,novelty_weight=2.)
+        self.assertEqual(veto['action'],'observe')
+
     def test_same_initial_labels_and_pure_label_budgets(self):
         train=[{'features':x.tolist(),'displacement_m':float(y)} for x,y in zip(self.x[:70],self.y[:70])]
         test=[{'features':x.tolist(),'displacement_m':float(y)} for x,y in zip(self.x[70:],self.y[70:])]

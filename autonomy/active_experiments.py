@@ -72,7 +72,9 @@ class TinyRegressor:
         if x.shape[-1:] != (FEATURES,) or not np.isfinite(x).all():
             raise ValueError('Invalid observable input')
         h = np.tanh(x @ self.w1 + self.b1)
-        return np.clip((h @ self.w2 + self.b2).reshape(x.shape[:-1]) * .12, *OUTCOME_CLIP)
+        # Keep members untruncated: clipping individual predictions erases
+        # disagreement for out-of-distribution objects (false certainty).
+        return (h @ self.w2 + self.b2).reshape(x.shape[:-1]) * .12
 
     def train(self, xs, ys, steps=100, lr=.015, seed=0):
         x, y = np.asarray(xs, float), np.asarray(ys, float)
@@ -140,7 +142,8 @@ class OutcomeEnsemble:
         if x.shape[-1:] != (FEATURES,) or not np.isfinite(x).all():
             raise ValueError('Expected preaction observable features')
         pred = np.stack([net.predict(x) for net in self.members], axis=0)
-        return pred.mean(axis=0), pred.std(axis=0)
+        # Clamp predicted mean to the measured outcome range, not epistemic spread.
+        return np.clip(pred.mean(axis=0), *OUTCOME_CLIP), pred.std(axis=0)
 
     def save(self, path):
         path = Path(path); path.parent.mkdir(parents=True, exist_ok=True)
@@ -236,6 +239,16 @@ def choose_action(model, sensor_features, safety_ok=True, novelty_weight=1.0):
     benefit = np.maximum(mean,0.) + novelty_weight*uncertainty*.8
     utility = benefit - np.asarray(ACTION_DURATIONS)*.05
     option=int(np.argmax(utility))
+    # A controlled epistemic query can be valuable even when the current
+    # expected motion is small. Cap its duration to the gentle action.
+    # It is an explicit heuristic for *simulator-only* experiments, not a
+    # safety certificate or a general reinforcement-learning policy.
+    if novelty_weight >= 1.5 and float(np.max(uncertainty)) >= .003:
+        idx=0
+        return {'action':'gentle_push','duration':ACTION_DURATIONS[idx],
+                'reason':'epistemic_query',
+                'predicted_m':round(float(mean[idx]),5),
+                'disagreement_m':round(float(uncertainty[idx]),5)}
     if utility[option] < .014:
         return {'action':'observe','duration':0.,'reason':'low_predicted_benefit',
                 'predicted_m':round(float(mean[option]),5),

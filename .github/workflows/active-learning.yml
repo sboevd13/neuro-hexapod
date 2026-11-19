@@ -72,6 +72,9 @@ jobs:
               assert r['termination'] != 'fall'
               assert Path(f"runs/active/world_seed_{r['seed']}/active_predictor.json").exists()
           assert sum(len(r['active_choices']) for r in rows)>0
+          assert sum(r['active_network_updates'] for r in rows)>0, 'No online update after experimental probes'
+          assert sum(r['active_new_labeled_samples'] for r in rows)>0, 'No newly learned object outcomes'
+          assert all(r['active_pushes']<=2 for r in rows), 'Physical experiment budget exceeded'
           PY
       - uses: actions/upload-artifact@v4
         if: always()
