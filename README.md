@@ -1,213 +1,7 @@
-# Neuro Hexapod — направленная V5 и residual RL
-
-Шестиногий робот с 18 MG996R в MuJoCo. Актуальный путь для ноутбука —
-**V3: управляемая ASYMMETRIC SPIDER GALLOP V5 TURBO + небольшие поправки PPO**.
-Правый стик по смыслу задаёт движение корпуса вперёд/назад/боком/диагональю
-без разворота, отдельная команда yaw — поворот на месте. В просмотрщике эти
-команды доступны с клавиатуры или через `--command`; подключения геймпада пока нет.
-
-## Установка на ноутбуке (Linux / WSL)
-
-Из существующего `~/arena`:
-
-```bash
-cd ~/arena
-git fetch origin
-git switch agent/residual-reference-gait
-git pull --ff-only origin agent/residual-reference-gait
-python3 -m venv .venv-laptop
-source .venv-laptop/bin/activate
-python -m pip install -r requirements-laptop.txt "jax[cuda12]==0.4.35"
-python -c "import jax; print(jax.devices())"
-```
-
-Если Git сообщает о локальных изменениях, сохраните их отдельным коммитом или
-stash перед переключением; не применяйте `reset --hard`. Старые модели и `.venv`
-новое обучение не использует. Проверено на Python 3.12; зависимости поддерживают
-Python 3.10–3.12. Для CPU достаточно `pip install -r requirements-laptop.txt`.
-Для окна просмотра в WSL нужен работающий WSLg/дисплей.
-
-## Запуск и первая проверка
-
-```bash
-python train_laptop.py --steps 100000 --run-dir checkpoints/laptop_v3
-```
-
-Физика выполняется нативным MuJoCo на CPU; обновления сети JAX используют GPU,
-если он установлен и доступен. По умолчанию 16 сред и 4 CPU-потока. Сеть небольшая
-(два слоя по 128), её вычисления при сборе опыта выполняются на CPU пакетно.
-Это убирает многократные обмены GPU/CPU на каждом шаге физики. `--device gpu`
-можно добавить, чтобы завершить запуск ошибкой, если CUDA недоступна.
-
-`--steps` — **число переходов сред**, а не число градиентных обновлений.
-Один rollout даёт 16 × 128 = 2048 переходов. Проверка всех 11 команд выполняется
-каждые 10 обновлений: первая примерно на **20 480 переходах**. Запрос 100 000
-округляется вверх до завершённого rollout (100 352). Число шагов само по себе
-не гарантирует улучшение: смотрите фактические проверки и сохранённую модель.
-
-Перед обучением запускается проверка основы **без нейросети**. Если она падает
-или не проходит тесты направлений, обучение не начинается. Это отдельный
-контроль физики, а не демонстрация якобы обученной модели.
-
-Когда появится `Saved passing learned policy`, во втором терминале:
-
-```bash
-cd ~/arena
-source .venv-laptop/bin/activate
-python evaluate_laptop.py --checkpoint checkpoints/laptop_v3/best.npz
-python view_laptop.py --checkpoint checkpoints/laptop_v3/best.npz --command 1 0 0
-```
-
-Вторая независимая проверка использует два начальных seed: должно быть
-**Acceptance: 22/22**. Для подробных метрик добавьте
-`--json checkpoints/laptop_v3/manual_evaluation.json`.
-
-В окне: **W/S** — вперёд/назад, **A/D** — боком влево/вправо,
-**Q/E** — поворот влево/вправо, **пробел** — остановка, **R** — сброс.
-Например, `--command 0 1 0` — влево; `--command 0.7071 0.7071 0` — диагональ;
-`--command 0 0 -1` — поворот вправо. vx/vy нормализуются по длине вектора.
-При падении просмотр останавливается и сообщает об ошибке — без скрытого
-сброса робота и без подмены нейросети эталонными действиями.
-
-Сравнение с чистой V5:
-
-```bash
-python view_laptop.py --reference --command 1 0 0
-```
-
-## Что сохраняется
-
-- `latest.npz` — последний завершённый цикл обучения, сохраняется после каждого
-  обновления; его можно смотреть даже при проваленных тестах.
-- `best.npz` — **обученная** политика с лучшим результатом среди прошедших все
-  тесты. До первой успешной проверки этого файла нет.
-- `initial_reference.npz` — явно обозначенная необученная сеть с нулевыми
-  поправками; никогда автоматически не выдаётся за `best`.
-- `evaluation_*.json` — падения, путь, отклонение направления, угол корпуса,
-  скорость поворота и амплитуда поправок для каждой команды.
-- `progress.jsonl`, `reference_metrics.json` — ход обучения и проверка основы.
-
-Один атомарно записываемый checkpoint содержит веса, состояние Adam, RNG,
-счётчики, конфигурацию, фиксированный формат входов и точный XML физики.
-Запись нового `best` не оставляет просмотрщику половину файла.
-
-**Ctrl+C** завершает текущий rollout/update и сохраняет `latest`. Продолжить до
-300 тысяч переходов:
-
-```bash
-python train_laptop.py --resume checkpoints/laptop_v3/latest.npz --steps 300000
-```
-
-Состояния физических эпизодов при продолжении сбрасываются; веса, оптимизатор,
-генератор случайных чисел и общий счётчик восстанавливаются. Новый запуск не
-перезаписывает непустой каталог: выберите другой `--run-dir` или `--resume`.
-Старые V1/V2 checkpoint несовместимы с V3.
-
-## Что изменено и почему
-
-- XML использует **implicitfast** и 2 мс физики. Обучение и просмотр больше не
-  заменяют его на Euler с отключённым демпфированием. В проверках на этой модели
-  прежние настройки вызывали падения даже без нейросети.
-- Эталон теперь зависит от направления: сохраняются индивидуальные фазы шести
-  ног, цикл **1,22 с** и движения LOAD/POWER/COIL/WHIP/CATCH. Для движения назад
-  и боком база не исчезает. Левый ход имеет плавную компенсацию асимметрии V5.
-- Ограничения поправок сети — **±3/4/4°** на coxa/femur/tibia, со сглаживанием.
-  Команды сервоприводам ограничены 300°/с (6° за 20 мс). Начальный средний выход
-  сети равен нулю; исследование мало и не заменяет походку случайными углами.
-- PPO использует свежий опыт, clipping и остановку эпохи по KL. Все направления
-  присутствуют с начала обучения; предусмотрена смена команды внутри эпизода.
-- Входы одинаково масштабируются физическими константами при обучении и
-  просмотре: нет изменяемых mean/var, захваченных JIT. Actor получает команду,
-  IMU-ориентацию/гироскоп, относительную ошибку курса, фазу, эталон, предыдущие
-  команды и поправки. Истинные скорости корпуса и суставов, контакты и усилия
-  доступны только симуляции/оценке, не нейросети. IMU-удержание курса — явная
-  часть базового контроллера.
-- Лимит времени эпизода отделён от падения: timeout сохраняет bootstrap для
-  value function и не получает штраф за падение.
-- Проверяется движение, а не только reward: отсутствие падений, правильный
-  знак перемещения/поворота, отклонение направления ≤20°, удержание курса,
-  ограниченный наклон и дрейф на месте. Это проверки плоской поверхности,
-  не подтверждение готовности к неровному грунту или физическому роботу.
-
-`sac_my_flax.py` теперь запускает V3 для совместимости со старой командой.
-Старый SAC сохранён как `sac_legacy_v2.py`; остальные `*_v2.py` оставлены для
-воспроизведения прошлых экспериментов. Актуальная визуализация — `view_laptop.py`.
-
-## Проверки кода
-
-```bash
-python -m unittest discover -s tests -v
-python evaluate_laptop.py --reference
-```
-
-Тесты проверяют согласованность CPU/JAX-сети, GAE на timeout/fall, восстановление
-оптимизатора, сохранение V5, пределы управления и отсутствие привилегированных
-наблюдений. Физика обучения, оценки и просмотра реализована в одном
-`LocomotionEnv` из `locomotion_laptop.py`.
-
-Контрольный запуск на CPU: 100 352 перехода, 49 обновлений PPO, 0 падений
-в обучении. Первая принятая модель на 20 480 переходах прошла независимые
-22/22 проверки. Resume и шесть регрессионных тестов также прошли.
-Полные метрики: [validation/laptop_v3_cpu.json](validation/laptop_v3_cpu.json).
-Это результат проверочного запуска, не замер скорости на пользовательской RTX 3060.
-
-## Эксперимент: нейросеть поведения (не заменяет V5/PPO)
-
-В `feature/learned-behavior-v1` добавлен дополнительный обучаемый модуль
-для локального выбора «вперёд / повернуть влево / повернуть вправо»,
-а также запись награды после реального шага MuJoCo и отдельное дообучение
-по собранным примерам. **По умолчанию модуль выключен:** обычная навигация
-остаётся надёжнее по числу столкновений в проверенных сценариях.
-
-```bash
-python explore_laptop.py --reference --seconds 90 --seed 7 --view
-python explore_laptop.py --reference --seconds 90 --seed 7 \
-  --behavior-model models/behavior_v1.json --view
-```
-
-Сравнение 6 невиденных сцен: baseline 64,90% карты и 0 контактов;
-дообученная сеть 65,04% и 1 контакт. Значимого преимущества пока нет.
-См. `docs/behavior.md` и `validation/autonomy_behavior_v1.json`.
-
-## Последовательное обучение поведения (эксперимент)
-
-На ветке `feature/temporal-q-learning` доступен опциональный Double DQN,
-обучающийся на переходах, записанных во время движения в MuJoCo.
-Базовая навигация остаётся режимом по умолчанию: новая сеть не показала
-преимущества по покрытию карты. Команды ограничиваются безопасным планировщиком.
-
-```bash
-python explore_laptop.py --reference --seed 47 --seconds 90 \
-  --temporal-model models/temporal_q_experimental.json --view
-```
-
-Протокол: [docs/temporal.md](docs/temporal.md),
-[validation/temporal_q_v1.json](validation/temporal_q_v1.json).
-
-## Любопытство к объектам (эксперимент)
-
-Ветка `feature/object-curiosity-v1` добавляет поиск отдельных объектов
-по дальномерным лучам, безопасные точки осмотра, запоминание успешных
-исследований и снижение интереса к уже исследованным предметам.
-**По умолчанию прежняя навигация не меняется.**
-
-```bash
-python explore_laptop.py --reference --seed 7 --seconds 90 \
-  --curiosity --view --output runs/curiosity/demo
-```
-
-Проверено 12 комнат в MuJoCo: 42 осмотра, 0 столкновений, 0 падений;
-покрытие 65,1% против 67,8% при обычной разведке. Это эксперимент с
-идеализированным дальномером и позой из симулятора, **не** полноценная
-камера, манипуляция предметами или физическое развёртывание.
-
-Подробности: [docs/curiosity.md](docs/curiosity.md),
-[validation/object_curiosity_v1.json](validation/object_curiosity_v1.json).
-\n## Experimental object interaction: learning what moves\n\nIn `feature/object-affordances-v1`, a simulated physical V5 hexapod\nexecutes a short push probe, watches the object surface using idealized\nrange measurements, and remembers which *apparent width class* moved.\nIt then decides whether to probe or avoid probing a second object from\nthe same class. **This is not RGB vision, grasping or end-to-end RL.**\n\n```bash\npython interact_laptop.py --seed 7 --seconds 8 --output runs/interaction\n```\n\nSix-seed (24-trial) headless MuJoCo test passed: movable boxes moved\n7.9 cm on initial probes and 14.8 cm for fresh similar objects on average,\nfixed boxes did not move, and repeat-class fixed boxes were left alone.\nNo robot falls in these narrow controlled trials. Results and limitations:\n[docs/interaction.md](docs/interaction.md),\n[validation/object_affordances_v1.json](validation/object_affordances_v1.json).\n
 
 ## Experiment: embodied learning of object motion
 
-The `feature/embodied-learning-v1` branch includes a separate, optional MuJoCo
+The `feature/embodied-learning-v1` branch includes a *separate, optional* MuJoCo
 research workflow with independently randomized object width, mass, friction
 and mobility; a probe-conditioned neural outcome predictor; and a single-scene
 room controller combining range-based mapping, curiosity, bounded physical
@@ -224,7 +18,27 @@ python autonomous_world.py --seed 7 --seconds 90 \
 In CI, 32 training and 16 independent test physical scenes produced a small
 Brier-score improvement over a constant predictor (0.226 vs 0.243), with
 unchanged classification accuracy (62.5%). Three continuous multi-object rooms
-produced five physical contacts and two online model updates.
+produced five real physical contacts and two incremental online model updates.
 No result is asserted for hardware control, semantics, force safety or long-term
 learned animal cognition. [Detailed protocol](docs/embodied_learning.md) and
 [reproducible results](validation/embodied_learning_v1.json).
+
+## Active physical experiment selection (research branch)
+
+The optional `feature/active-experiment-learning` branch adds an ensemble
+predictor of **physical push distance and model disagreement**. It compares
+random, hand-crafted and information-seeking choices of longer MuJoCo push
+experiments with identical label budgets on independent randomized objects.
+The same model can choose bounded extra push lengths during a continuous
+room simulation and update from newly observed outcomes. Physical robot
+control and the original gait are unchanged.
+
+```bash
+python active_learning_benchmark.py --pool-size 200 --test-size 60 --output runs/active_learning
+python autonomous_world.py --seed 11 --seconds 90 --view \
+  --experiment-model runs/active_learning/active_world_model.json \
+  --experiment-experience runs/active_learning/pool/sensor_labels.json \
+  --output runs/active_world
+```
+
+See [docs/active_learning.md](docs/active_learning.md) and the CI report.
