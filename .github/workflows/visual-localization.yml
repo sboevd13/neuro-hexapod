@@ -1,0 +1,73 @@
+name: Visual sensor localization in MuJoCo
+on:
+  push:
+    branches: [feature/visual-slam-simulation]
+  pull_request:
+    paths:
+      - 'visual_autonomy.py'
+      - 'autonomy/sim_perception.py'
+      - 'autonomy/localization.py'
+      - 'tests/test_sim_perception.py'
+      - '.github/workflows/visual-localization.yml'
+
+jobs:
+  camera-and-localization:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      OPENBLAS_NUM_THREADS: '1'
+      MUJOCO_GL: egl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install MuJoCo rendering dependencies
+        run: |
+          python -m pip install 'mujoco==3.2.7' 'numpy>=1.26,<3'
+      - name: Test simulated sensors, object detection and foot odometry
+        run: python -m unittest discover -s tests -p 'test_sim_perception.py' -v
+      - name: Test camera and estimated-pose navigation on three rooms
+        run: |
+          for seed in 7 11 23; do
+            python visual_autonomy.py --seed "$seed" --seconds 22 --camera-every 45 --output "runs/visual/estimated_$seed"
+          done
+      - name: Independent odometry-only and simulator truth controls
+        run: |
+          for seed in 7 11 23; do
+            python visual_autonomy.py --seed "$seed" --seconds 22 --camera-every 90 --localization odometry --output "runs/visual/odometry_$seed"
+          done
+          python visual_autonomy.py --seed 7 --seconds 22 --camera-every 90 --localization oracle --output runs/visual/oracle_7
+      - name: Audit real rendered camera frames and simulated localization
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          report=[]
+          for seed in [7,11,23]:
+              a=json.loads(Path(f'runs/visual/estimated_{seed}/metrics.json').read_text())
+              b=json.loads(Path(f'runs/visual/odometry_{seed}/metrics.json').read_text())
+              assert a['termination']!='fall', f'Fell in scene {seed}'
+              assert a['camera_frames']>=12, 'No real camera stream'
+              assert a['scan_count']>=50, 'No scanner stream'
+              assert a['foot_odometry_updates']>5, 'Foot proprioception not used'
+              assert a['mapped_fraction']>0.15, 'No real occupancy mapping'
+              assert a['position_rmse_m'] is not None
+              assert not a['controller_world_truth']
+              assert Path(f'runs/visual/estimated_{seed}/camera_first.png').read_bytes().startswith(b'\x89PNG')
+              report.append({'seed':seed,'camera_frames':a['camera_frames'],
+                             'objects_seen_in_rgb':a['visual_detections'],
+                             'estimated_rmse_m':a['position_rmse_m'],
+                             'dead_reckoning_rmse_m':b['position_rmse_m'],
+                             'scan_matching_updates':a['scan_matching_corrections'],
+                             'coverage':a['mapped_fraction']})
+          assert sum(x['objects_seen_in_rgb'] for x in report)>0, 'Camera saw no actual world objects'
+          Path('runs/visual/validation.json').write_text(json.dumps(report,indent=2)+'\n')
+          print('VISUAL_VALIDATION',json.dumps(report))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-localization-mujoco-evidence
+          path: runs/visual
+          if-no-files-found: warn
