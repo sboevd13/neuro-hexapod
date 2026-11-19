@@ -1,0 +1,77 @@
+{
+  "title": "Experimental learned navigation: separated simulator benchmarks",
+  "source": "GitHub Actions run 44529160263",
+  "protocol": {
+    "physics": "MuJoCo 3.2.7 native, 60 simulated seconds per seed",
+    "locomotion": "V5 reference, not PPO checkpoint",
+    "sensor": "idealized depth rays",
+    "pose": "MuJoCo ground truth",
+    "obstacles": 5
+  },
+  "contextual_training": {
+    "train_examples": 12000,
+    "held_out_examples": 3000,
+    "held_out_action_selection_accuracy": 0.926,
+    "train_seed": 13579,
+    "test_seed": 24680,
+    "scope": "one-step synthetic 2D reward prediction"
+  },
+  "pre_adaptation": {
+    "seeds": [
+      7,
+      11,
+      23,
+      31,
+      47,
+      59
+    ],
+    "reference": {
+      "mean_map_coverage": 0.69438,
+      "contacts": 0,
+      "falls": 0
+    },
+    "learned": {
+      "mean_map_coverage": 0.64656,
+      "contacts": 0,
+      "falls": 0
+    }
+  },
+  "feedback_adaptation": {
+    "train_seeds": [
+      7,
+      11,
+      23,
+      31
+    ],
+    "observed_actions": 16,
+    "observed_action_training_mse_before": 0.09208,
+    "observed_action_training_mse_after": 0.01004
+  },
+  "held_out": {
+    "seeds": [
+      47,
+      59,
+      71,
+      83,
+      97,
+      109
+    ],
+    "reference": {
+      "mean_map_coverage": 0.64896,
+      "contacts": 0,
+      "falls": 0
+    },
+    "original_learned": {
+      "mean_map_coverage": 0.63708,
+      "contacts": 1,
+      "falls": 0
+    },
+    "adapted_learned": {
+      "mean_map_coverage": 0.65041,
+      "contacts": 1,
+      "falls": 0
+    }
+  },
+  "decision": "Experimental only; adapted policy has no demonstrated meaningful navigation or safety advantage over the original planner; keep baseline default.",
+  "limitations": "Single trial per seed, small adaptation sample, ideal sensors/localization, no physical robot tests or long-horizon RL."
+}
