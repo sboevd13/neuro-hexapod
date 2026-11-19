@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 
 from autonomy.behavior import INPUT_SIZE, init_weights
-from autonomy.temporal import (Replay, TemporalModel, safe_mask, reward_from_motion,
+from autonomy.temporal import (Replay, TemporalModel, safe_mask, approve_override, reward_from_motion,
                                double_dqn_targets, read_replay, write_replay,
                                train_double_dqn)
 
@@ -27,6 +27,17 @@ class TemporalTests(unittest.TestCase):
             self.assertNotEqual(model.choose(np.zeros(INPUT_SIZE), rays, epsilon=1, rng=rng), 0)
         with self.assertRaises(ValueError):
             safe_mask(np.array([np.nan]*23))
+
+    def test_route_arbitration_blocks_aggressive_neural_overrides(self):
+        far = np.full(23, 1.15)
+        close = far.copy()
+        close[11] = 0.55
+        self.assertFalse(approve_override(1, 0, far))
+        self.assertFalse(approve_override(1, 2, close))
+        self.assertFalse(approve_override(0, 2, far))
+        self.assertTrue(approve_override(0, 2, close))
+        self.assertTrue(approve_override(1, 1, far))
+        self.assertFalse(approve_override(None, 0, far))
 
     def test_temporal_reward_depends_on_actual_progress_and_penalizes_contact(self):
         forward = reward_from_motion([0,0],[0.2,0],0,0,[1,0],0.02)

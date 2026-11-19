@@ -77,7 +77,29 @@ jobs:
           assert baseline['falls'] == 0, 'Existing V5 reference unexpectedly fell'
           assert temporal['falls'] == 0, 'Temporal controller fell in held-out room'
           rows = json.loads((root/'temporal_summary.json').read_text())['episodes']
-          assert sum(r['temporal_decisions'] for r in rows) > 0, 'Temporal network never acted'
+          assert sum(r['temporal_overrides'] for r in rows) > 0, 'Temporal controller made no actual changes'
+          PY
+      - name: Baseline on six additional untouched validation rooms
+        run: |
+          python benchmark_autonomy.py --mode baseline \
+            --seconds 60 --seeds 113 127 139 149 163 179 --output runs/temporal/validation
+      - name: Temporal Q on additional untouched validation rooms
+        run: |
+          python benchmark_autonomy.py --mode temporal \
+            --temporal-model runs/temporal/adapted_q.json \
+            --seconds 60 --seeds 113 127 139 149 163 179 --output runs/temporal/validation
+      - name: Report new-scene performance separately
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('runs/temporal/validation')
+          baseline=json.loads((root/'baseline_summary.json').read_text())['summary']
+          learned=json.loads((root/'temporal_summary.json').read_text())['summary']
+          print('NEW VALIDATION BASELINE', baseline)
+          print('NEW VALIDATION TEMPORAL', learned)
+          assert baseline['falls']==0
+          assert learned['falls']==0
           PY
       - uses: actions/upload-artifact@v4
         if: always()

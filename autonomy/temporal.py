@@ -21,7 +21,7 @@ VERSION = 2
 ACTIONS = 3
 
 
-def safe_mask(ranges, margin=0.37):
+def safe_mask(ranges, margin=0.48):
     """Always permit turning; block forward when any frontal ray is too near."""
     ranges = np.asarray(ranges, dtype=float)
     if ranges.shape != (23,) or not np.isfinite(ranges).all() or np.any(ranges < 0):
@@ -29,6 +29,24 @@ def safe_mask(ranges, margin=0.37):
     if not np.isfinite(margin) or margin <= 0:
         raise ValueError('Expected a positive margin')
     return np.array([min(ranges[10:13]) >= margin, True, True], dtype=bool)
+
+
+def approve_override(planner_action, neural_action, ranges, turn_trigger=0.62):
+    """Conservative arbitration: never force forward or reverse a route turn.
+
+    Only an early avoidance turn may replace a planner-forward command when
+    the forward obstacle lies within a deliberately conservative distance.
+    This is a heuristic safety gate, NOT a formal guarantee of no contacts.
+    """
+    if planner_action not in (0,1,2) or neural_action not in (0,1,2):
+        return False
+    rays = np.asarray(ranges, float)
+    if rays.shape != (23,) or not np.isfinite(rays).all() or np.any(rays < 0):
+        raise ValueError('Invalid range sensor')
+    if planner_action == neural_action:
+        return True
+    return bool(planner_action == 0 and neural_action in (1,2)
+                and min(rays[10:13]) < turn_trigger)
 
 
 def reward_from_motion(start_xy, end_xy, start_yaw, end_yaw, waypoint,

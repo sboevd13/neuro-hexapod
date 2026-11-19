@@ -20,8 +20,8 @@ import numpy as np
 from autonomy.explorer import FrontierExplorer, OccupancyMemory, range_scan
 from autonomy.scene import make_scene
 from autonomy.behavior import ACTIONS, state_features
-from autonomy.temporal import (TemporalModel, safe_mask, reward_from_motion,
-                               write_replay)
+from autonomy.temporal import (TemporalModel, safe_mask, approve_override,
+                               reward_from_motion, write_replay)
 from locomotion_laptop import CONTROL_DT, Config, LocomotionEnv, MODEL_PATH, load_model
 
 
@@ -220,7 +220,8 @@ def main():
                         else:
                             temporal_repeat = 0
                         temporal_last = chosen
-                        if temporal_repeat <= 6:
+                        if (temporal_repeat <= 6 and approve_override(
+                                discrete_action(command), chosen, ranges)):
                             cmd = np.array(ACTIONS[chosen], dtype=float)
                             if not np.allclose(cmd, command):
                                 temporal_overrides += 1
