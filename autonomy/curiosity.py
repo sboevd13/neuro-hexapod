@@ -161,7 +161,7 @@ class CuriosityController:
     Novelty and observed outcomes influence which object is approached next.
     """
 
-    def __init__(self, explorer, objects, minimum_standoff=0.47):
+    def __init__(self, explorer, objects, minimum_standoff=0.58):
         if minimum_standoff < explorer.clearance:
             raise ValueError('Inspection standoff must exceed collision clearance')
         self.explorer = explorer
