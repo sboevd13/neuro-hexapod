@@ -33,13 +33,20 @@ def main():
     p.add_argument('--seconds', type=float, default=60)
     p.add_argument('--obstacles', type=int, default=5)
     p.add_argument('--output', type=Path, default=Path('runs/benchmark'))
-    p.add_argument('--mode', choices=['baseline', 'learned'], default='baseline')
+    p.add_argument('--mode', choices=['baseline', 'learned', 'temporal'], default='baseline')
     p.add_argument('--behavior-model', type=Path)
+    p.add_argument('--temporal-model', type=Path)
+    p.add_argument('--record-transitions', action='store_true')
+    p.add_argument('--temporal-epsilon', type=float, default=0.)
     args = p.parse_args()
     if args.seconds <= 0 or len(set(args.seeds)) != len(args.seeds):
         p.error('seconds must be positive and seeds unique')
     if args.mode == 'learned' and args.behavior_model is None:
         p.error('learned mode requires --behavior-model')
+    if args.mode == 'temporal' and args.temporal_model is None:
+        p.error('temporal mode requires --temporal-model')
+    if not 0 <= args.temporal_epsilon <= 1 or (args.temporal_epsilon and args.mode != 'temporal'):
+        p.error('Invalid epsilon or epsilon supplied outside temporal mode')
     rows = []
     for seed in args.seeds:
         dest = args.output / args.mode / f'seed_{seed}'
@@ -48,6 +55,11 @@ def main():
                    '--seconds', str(args.seconds), '--output', str(dest)]
         if args.mode == 'learned':
             command.extend(['--behavior-model', str(args.behavior_model), '--record-experience'])
+        if args.mode == 'temporal':
+            command.extend(['--temporal-model', str(args.temporal_model),
+                            '--temporal-epsilon', str(args.temporal_epsilon)])
+        if args.record_transitions:
+            command.append('--record-transitions')
         run = subprocess.run(command, capture_output=True, text=True)
         if run.returncode:
             raise RuntimeError(f'Failed seed {seed}: {run.stderr}\n{run.stdout[-3000:]}')

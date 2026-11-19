@@ -1,0 +1,86 @@
+name: Temporal navigation research
+
+on:
+  push:
+    branches:
+      - feature/temporal-q-learning
+  pull_request:
+    paths:
+      - 'autonomy/temporal.py'
+      - 'train_temporal.py'
+      - 'explore_laptop.py'
+      - 'benchmark_autonomy.py'
+      - 'tests/test_temporal.py'
+      - '.github/workflows/temporal-rl.yml'
+
+jobs:
+  temporal-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU MuJoCo and NumPy
+        run: python -m pip install 'numpy>=1.26,<3' 'mujoco==3.2.7'
+      - name: Navigation and RL unit tests
+        run: |
+          python -m unittest discover -s tests -p test_autonomy.py -v
+          python -m unittest discover -s tests -p test_behavior.py -v
+          python -m unittest discover -s tests -p test_experience.py -v
+          python -m unittest discover -s tests -p test_temporal.py -v
+      - name: Collect baseline MuJoCo transitions on training rooms
+        run: |
+          python benchmark_autonomy.py --mode baseline --record-transitions \
+            --seconds 45 --seeds 7 11 23 31 41 53 --output runs/temporal/train
+      - name: Fit discounted neural Q values to actual transitions
+        run: |
+          python train_temporal.py \
+            --transitions runs/temporal/train/baseline/seed_*/transitions.jsonl \
+            --init-model models/behavior_v1.json \
+            --epochs 45 --gamma 0.96 --seed 19 \
+            --output runs/temporal/initial_q.json
+      - name: Gather safe epsilon-greedy transitions in additional training rooms
+        run: |
+          python benchmark_autonomy.py --mode temporal \
+            --temporal-model runs/temporal/initial_q.json \
+            --temporal-epsilon 0.20 --record-transitions \
+            --seconds 45 --seeds 13 19 29 37 --output runs/temporal/experience
+      - name: Retrain using both initial and exploratory physical rollouts
+        run: |
+          python train_temporal.py \
+            --transitions runs/temporal/train/baseline/seed_*/transitions.jsonl \
+              runs/temporal/experience/temporal/seed_*/transitions.jsonl \
+            --init-model runs/temporal/initial_q.json \
+            --epochs 55 --gamma 0.96 --seed 23 \
+            --output runs/temporal/adapted_q.json
+      - name: Evaluate original planner on six unseen rooms
+        run: |
+          python benchmark_autonomy.py --mode baseline \
+            --seconds 60 --seeds 47 59 71 83 97 109 --output runs/temporal/eval
+      - name: Evaluate new temporal Q controller on same six rooms
+        run: |
+          python benchmark_autonomy.py --mode temporal \
+            --temporal-model runs/temporal/adapted_q.json \
+            --seconds 60 --seeds 47 59 71 83 97 109 --output runs/temporal/eval
+      - name: Compare behavior without hiding regressions
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('runs/temporal/eval')
+          baseline = json.loads((root/'baseline_summary.json').read_text())['summary']
+          temporal = json.loads((root/'temporal_summary.json').read_text())['summary']
+          print('BASELINE', baseline)
+          print('TEMPORAL_Q', temporal)
+          assert baseline['falls'] == 0, 'Existing V5 reference unexpectedly fell'
+          assert temporal['falls'] == 0, 'Temporal controller fell in held-out room'
+          rows = json.loads((root/'temporal_summary.json').read_text())['episodes']
+          assert sum(r['temporal_decisions'] for r in rows) > 0, 'Temporal network never acted'
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: temporal-navigation-experiment
+          path: runs/temporal
