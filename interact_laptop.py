@@ -86,7 +86,12 @@ def touching_target(env, geom_id):
     for k in range(data.ncon):
         c=data.contact[k]
         if geom_id in (int(c.geom1),int(c.geom2)):
-            return True
+            other = int(c.geom2) if int(c.geom1) == geom_id else int(c.geom1)
+            # Contact with the floor is persistent and is not a robot touch.
+            if (int(env.model.geom_bodyid[other]) != 0 and
+                    int(env.model.geom_bodyid[other]) !=
+                    int(env.model.geom_bodyid[geom_id])):
+                return True
     return False
 
 
