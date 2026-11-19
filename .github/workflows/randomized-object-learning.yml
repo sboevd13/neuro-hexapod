@@ -1,0 +1,43 @@
+name: Randomized physical object learning
+on:
+  push:
+    branches:
+      - feature/embodied-learning-v1
+  pull_request:
+    paths:
+      - autonomy/affordance_model.py
+      - affordance_rollouts.py
+      - autonomous_world.py
+      - tests/test_affordance_model.py
+      - .github/workflows/randomized-object-learning.yml
+jobs:
+  physics-and-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'mujoco==3.2.7' 'numpy>=1.26,<3'
+      - name: Unit tests of model inputs and supervised learning
+        run: python -m unittest discover -s tests -p test_affordance_model.py -v
+      - name: Randomized physical encounters with independent test scenes
+        run: python affordance_rollouts.py --output runs/embodied
+      - name: Validate physics dataset and report (do not assume improvement)
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          d=json.loads(Path('runs/embodied/report.json').read_text())
+          print('RANDOMIZED PHYSICS',d)
+          assert d['train_attempts']==32 and d['test_attempts']==16
+          assert d['train_valid']>=8 and d['test_valid']>=5
+          assert d['test_metrics']['samples']==d['test_valid']
+          assert Path('runs/embodied/model.json').is_file()
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: randomized-object-learning
+          path: runs/embodied/
