@@ -31,7 +31,7 @@ def safe_mask(ranges, margin=0.48):
     return np.array([min(ranges[10:13]) >= margin, True, True], dtype=bool)
 
 
-def approve_override(planner_action, neural_action, ranges, turn_trigger=0.62):
+def approve_override(planner_action, neural_action, ranges, turn_trigger=0.95):
     """Conservative arbitration: never force forward or reverse a route turn.
 
     Only an early avoidance turn may replace a planner-forward command when
