@@ -85,11 +85,17 @@ def load_experience(path):
     if not isinstance(payload,list):raise ValueError('Expected list of prior probe outcomes')
     result=[]
     for row in payload:
-        if (not isinstance(row,dict) or len(row.get('features',[]))!=5 or
-                row.get('label') not in (0,1) or
+        if not isinstance(row,dict):
+            raise ValueError('Invalid previous probe record')
+        if row.get('valid') is False:
+            continue
+        label=row.get('label',row.get('label_meaningful_total_movement'))
+        if (len(row.get('features',[]))!=5 or label not in (0,1) or
                 not np.isfinite(row['features']).all()):
             raise ValueError('Invalid prior probe record')
-        result.append({'features':list(map(float,row['features'])),'label':int(row['label'])})
+        # Strip audit-only MuJoCo metadata. The policy replay contains ONLY
+        # range/contact features and measured physical outcome labels.
+        result.append({'features':list(map(float,row['features'])),'label':int(label)})
     return result
 
 
@@ -146,10 +152,11 @@ def main():
         viewer.cam.elevation=-50
     scans=0
     touches=0
+    online_updates=0
     ignored=[]
     term='time_limit'
     def finish_probe(note,final_point=None):
-        nonlocal phase,phase_ticks,target,target_start,short_features,first_movement,network,touches
+        nonlocal phase,phase_ticks,target,target_start,short_features,first_movement,network,touches,online_updates
         if target is not None:
             current=final_point
             distance=(None if current is None or target_start is None else
@@ -162,6 +169,7 @@ def main():
                     x=np.array([r['features'] for r in entries])
                     y=np.array([r['label'] for r in entries])
                     network.fit(x,y,epochs=25,lr=.01,seed=args.seed+len(entries))
+                    online_updates+=1
             attempts.append({'note':note,'target_surface_at_start':target_start.tolist() if target_start is not None else None,
                              'total_sensed_movement_m':None if distance is None else round(distance,5),
                              'short_probe_movement_m':first_movement,
@@ -269,6 +277,7 @@ def main():
                 'object_hypotheses':len(objects.tracks),'object_inspections':objects.inspections,
                 'physical_touches':touches,'interactions':attempts,
                 'previous_training_samples':len(prior),'new_labeled_samples':len(entries)-len(prior),
+                'online_network_updates':online_updates,
                 'properties_for_audit_only':audit,
                 'limitations':'Idealized range, simulator truth pose, approximate AABB rays, V5 reference only; not hardware-safe or semantic object recognition'}
         (args.output/'report.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')

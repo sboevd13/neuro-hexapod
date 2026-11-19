@@ -43,7 +43,7 @@ jobs:
         run: |
           for seed in 7 11 23; do
             python autonomous_world.py --seed "$seed" --seconds 90 \
-              --model runs/embodied/model.json --output "runs/integrated/seed_$seed"
+              --model runs/embodied/model.json --experience runs/embodied/train/episodes.json --output "runs/integrated/seed_$seed"
           done
       - name: Audit continuous MuJoCo session outcomes
         run: |
@@ -54,6 +54,7 @@ jobs:
           for row in rows:print('INTEGRATED',row)
           assert all(r['sensor_surveys']>0 and r['object_hypotheses']>0 for r in rows)
           assert all(r['elapsed_s']>=1 for r in rows)
+          assert any(r['new_labeled_samples']>0 and r['online_network_updates']>0 for r in rows)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
