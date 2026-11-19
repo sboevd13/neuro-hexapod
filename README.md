@@ -177,8 +177,8 @@ python explore_laptop.py --reference --seconds 90 --seed 7 \
 преимущества по покрытию карты. Команды ограничиваются безопасным планировщиком.
 
 ```bash
-python explore_laptop.py --reference --seed 47 --seconds 90 --view \\
-  --temporal-model models/temporal_q_experimental.json
+python explore_laptop.py --reference --seed 47 --seconds 90 \
+  --temporal-model models/temporal_q_experimental.json --view
 ```
 
 Протокол: [docs/temporal.md](docs/temporal.md),
