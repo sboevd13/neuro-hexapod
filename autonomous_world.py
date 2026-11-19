@@ -234,7 +234,7 @@ def main():
                     finish_probe('long_probe_complete',now)
             elif phase=='retreat':
                 phase_ticks+=1
-                if phase_ticks>=round(1.1/CONTROL_DT):
+                if phase_ticks>=round(3.5/CONTROL_DT):
                     phase='explore';phase_ticks=0
                     curiosity.abandon()
             env.set_command(current_command)
