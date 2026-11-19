@@ -111,8 +111,8 @@ def run_trial(trial, memory, seed=7, seconds=8.0, contact_seconds=0.65, view=Fal
     viewer=None
     deadline=time.perf_counter()
     if view:
-        import mujoco.viewer
-        viewer=mujoco.viewer.launch_passive(model,env.data)
+        from mujoco import viewer as mj_viewer
+        viewer=mj_viewer.launch_passive(model,env.data)
         viewer.cam.distance=1.2
         viewer.cam.azimuth=135
         viewer.cam.elevation=-35
