@@ -24,6 +24,11 @@ def summarize(rows):
         'falls': sum(x['termination'] == 'fall' for x in rows),
         'mean_traveled_m': round(statistics.mean(x['traveled_m'] for x in rows), 4),
         'mean_goal_changes': round(statistics.mean(x['goal_changes'] for x in rows), 2),
+        'total_object_inspections': sum(x.get('object_inspections', 0) for x in rows),
+        'total_object_attempts': sum(x.get('object_attempts', 0) for x in rows),
+        'total_object_commands': sum(x.get('object_commands', 0) for x in rows),
+        'total_object_hypotheses': sum(x.get('object_hypotheses', 0) for x in rows),
+        'total_intrinsic_reward': round(sum(x.get('intrinsic_reward', 0) for x in rows), 3),
     }
 
 
@@ -33,7 +38,7 @@ def main():
     p.add_argument('--seconds', type=float, default=60)
     p.add_argument('--obstacles', type=int, default=5)
     p.add_argument('--output', type=Path, default=Path('runs/benchmark'))
-    p.add_argument('--mode', choices=['baseline', 'learned', 'temporal'], default='baseline')
+    p.add_argument('--mode', choices=['baseline', 'learned', 'temporal', 'curiosity'], default='baseline')
     p.add_argument('--behavior-model', type=Path)
     p.add_argument('--temporal-model', type=Path)
     p.add_argument('--record-transitions', action='store_true')
@@ -53,6 +58,8 @@ def main():
         command = [sys.executable, 'explore_laptop.py', '--reference',
                    '--seed', str(seed), '--obstacles', str(args.obstacles),
                    '--seconds', str(args.seconds), '--output', str(dest)]
+        if args.mode == 'curiosity':
+            command.append('--curiosity')
         if args.mode == 'learned':
             command.extend(['--behavior-model', str(args.behavior_model), '--record-experience'])
         if args.mode == 'temporal':
@@ -67,7 +74,9 @@ def main():
         rows.append(row)
         print(f"seed={seed} coverage={row['coverage']:.1%} "
               f"contacts={row['contacts']} fallen={row['termination']=='fall'} "
-              f"distance={row['traveled_m']:.2f} m", flush=True)
+              f"distance={row['traveled_m']:.2f} m"
+              f" inspected={row.get('object_inspections',0)}"
+              f" objects={row.get('object_hypotheses',0)}", flush=True)
     report = {'mode': args.mode, 'seeds': args.seeds, 'seconds': args.seconds,
               'obstacles': args.obstacles, 'summary': summarize(rows), 'episodes': rows}
     args.output.mkdir(parents=True, exist_ok=True)
