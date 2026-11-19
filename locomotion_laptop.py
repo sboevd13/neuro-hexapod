@@ -119,7 +119,11 @@ def directional_reference(phase, command):
 def load_model(xml=None):
     xml = MODEL_PATH.read_text() if xml is None else xml
     model = mujoco.MjModel.from_xml_string(xml)
-    if model.nu != 18 or model.nq != 25:
+    experimental_prop = (
+        model.nq == 32 and
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT,
+                          'interaction_target_free') >= 0)
+    if model.nu != 18 or not (model.nq == 25 or experimental_prop):
         raise ValueError("Expected the 18-servo hexapod model")
     if model.opt.integrator != mujoco.mjtIntegrator.mjINT_IMPLICITFAST:
         raise ValueError("V3 requires the validated implicitfast integrator")
@@ -160,7 +164,7 @@ class LocomotionEnv:
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:3] = [0, 0, 0.110]
         self.data.qpos[3:7] = [math.cos(yaw/2), 0, 0, math.sin(yaw/2)]
-        self.data.qpos[7:] = STAND + rng.uniform(-0.002, 0.002, 18)
+        self.data.qpos[7:25] = STAND + rng.uniform(-0.002, 0.002, 18)
         self.commanded_q = np.clip(STAND.copy(), self.low, self.high)
         self.data.ctrl[:] = self.commanded_q
         mujoco.mj_forward(self.model, self.data)

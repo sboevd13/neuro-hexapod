@@ -1,0 +1,296 @@
+{
+  "experiment": "range-sensed physical contact affordance learning",
+  "github_actions_run": "https://github.com/sboevd13/neuro-hexapod/actions/runs/44542470781",
+  "date": "2026-11-19",
+  "metrics": {
+    "n_seeds": 6,
+    "n_trials": 24,
+    "small_moved_trials": 12,
+    "large_avoidance_trials": 6,
+    "falls": 0,
+    "mean_first_small_movement_m": 0.07897,
+    "mean_new_small_movement_m": 0.14838,
+    "world": "MuJoCo 3.2.7; V5 reference; idealized range and touch"
+  },
+  "test_cases": "Each seed runs (i) narrow freejoint light box, (ii) wide anchored box, (iii) new narrow freejoint light box, (iv) new wide anchored box.",
+  "method": "Beta-smoothed pushability prior. Training outcomes derive from measured surface motion after V5 physical touch. True MuJoCo body position is used only to audit sensor measurement.",
+  "assumptions": "Scenes use isolated boxes, idealized 23-beam lidar with known simulator body pose, simulator-only tactile contact, simple width-based categories and low-speed forward commands.",
+  "limitations": [
+    "Different seeds perturb initial servo jitter but do not vary box arrangement or object kind",
+    "The association of narrow objects with movable boxes and wide objects with anchored boxes is built into these test scenes and may not hold elsewhere",
+    "No general object recognition, semantic knowledge, gripper manipulation or learned joint-level motor skill",
+    "Safety has not been tested on hardware or arbitrary objects"
+  ],
+  "per_seed": [
+    {
+      "seed": 7,
+      "trials": [
+        {
+          "case": "train_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.07945,
+          "physical_displacement_m": 0.07945,
+          "fell": false,
+          "belief_after_trial": 0.66667
+        },
+        {
+          "case": "train_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        },
+        {
+          "case": "heldout_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.14844,
+          "physical_displacement_m": 0.14844,
+          "fell": false,
+          "belief_after_trial": 0.75
+        },
+        {
+          "case": "heldout_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "observe",
+          "touch_detected": false,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        }
+      ]
+    },
+    {
+      "seed": 11,
+      "trials": [
+        {
+          "case": "train_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.07632,
+          "physical_displacement_m": 0.07632,
+          "fell": false,
+          "belief_after_trial": 0.66667
+        },
+        {
+          "case": "train_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        },
+        {
+          "case": "heldout_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.14845,
+          "physical_displacement_m": 0.14845,
+          "fell": false,
+          "belief_after_trial": 0.75
+        },
+        {
+          "case": "heldout_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "observe",
+          "touch_detected": false,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        }
+      ]
+    },
+    {
+      "seed": 23,
+      "trials": [
+        {
+          "case": "train_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.07925,
+          "physical_displacement_m": 0.07925,
+          "fell": false,
+          "belief_after_trial": 0.66667
+        },
+        {
+          "case": "train_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        },
+        {
+          "case": "heldout_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.14842,
+          "physical_displacement_m": 0.14842,
+          "fell": false,
+          "belief_after_trial": 0.75
+        },
+        {
+          "case": "heldout_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "observe",
+          "touch_detected": false,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        }
+      ]
+    },
+    {
+      "seed": 31,
+      "trials": [
+        {
+          "case": "train_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.07858,
+          "physical_displacement_m": 0.07858,
+          "fell": false,
+          "belief_after_trial": 0.66667
+        },
+        {
+          "case": "train_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        },
+        {
+          "case": "heldout_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.14837,
+          "physical_displacement_m": 0.14837,
+          "fell": false,
+          "belief_after_trial": 0.75
+        },
+        {
+          "case": "heldout_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "observe",
+          "touch_detected": false,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        }
+      ]
+    },
+    {
+      "seed": 47,
+      "trials": [
+        {
+          "case": "train_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.08073,
+          "physical_displacement_m": 0.08073,
+          "fell": false,
+          "belief_after_trial": 0.66667
+        },
+        {
+          "case": "train_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        },
+        {
+          "case": "heldout_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.14817,
+          "physical_displacement_m": 0.14817,
+          "fell": false,
+          "belief_after_trial": 0.75
+        },
+        {
+          "case": "heldout_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "observe",
+          "touch_detected": false,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        }
+      ]
+    },
+    {
+      "seed": 59,
+      "trials": [
+        {
+          "case": "train_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.07946,
+          "physical_displacement_m": 0.07946,
+          "fell": false,
+          "belief_after_trial": 0.66667
+        },
+        {
+          "case": "train_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        },
+        {
+          "case": "heldout_light_narrow",
+          "sensor_signature": "narrow",
+          "chosen_action": "probe",
+          "touch_detected": true,
+          "sensed_displacement_m": 0.14845,
+          "physical_displacement_m": 0.14845,
+          "fell": false,
+          "belief_after_trial": 0.75
+        },
+        {
+          "case": "heldout_fixed_wide",
+          "sensor_signature": "wide",
+          "chosen_action": "observe",
+          "touch_detected": false,
+          "sensed_displacement_m": 0.0,
+          "physical_displacement_m": 0.0,
+          "fell": false,
+          "belief_after_trial": 0.33333
+        }
+      ]
+    }
+  ]
+}

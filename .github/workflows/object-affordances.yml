@@ -1,0 +1,78 @@
+name: Learn object affordances in MuJoCo
+
+on:
+  push:
+    branches: [feature/object-affordances-v1]
+  pull_request:
+    paths:
+      - autonomy/interaction.py
+      - interact_laptop.py
+      - tests/test_interaction.py
+      - locomotion_laptop.py
+      - docs/interaction.md
+      - .github/workflows/object-affordances.yml
+
+jobs:
+  object-probes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install MuJoCo and NumPy
+        run: python -m pip install 'numpy>=1.26,<3' 'mujoco==3.2.7'
+      - name: Test object sensing and learning
+        run: |
+          python -m unittest discover -s tests -p test_interaction.py -v
+          python -m unittest discover -s tests -p test_curiosity.py -v
+      - name: Run contact-physics trials on six different robot initializations
+        run: |
+          for seed in 7 11 23 31 47 59; do
+            python interact_laptop.py --seconds 8 --seed "$seed" --output "runs/affordances/seed_$seed"
+          done
+      - name: Validate real movement, sensing, and transfer on every seed
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from statistics import mean
+          seeds=[7,11,23,31,47,59]
+          reports=[]
+          for seed in seeds:
+              d=json.loads(Path(f'runs/affordances/seed_{seed}/report.json').read_text())
+              a,b,c,e=d['trials']
+              reports.append(d)
+              assert not any(x['fell'] for x in (a,b,c,e)), f'Fall: seed {seed}'
+              assert [x['signature'] for x in (a,b,c,e)]==['narrow','wide','narrow','wide'], f'Signature: seed {seed}'
+              assert [x['action'] for x in (a,b,c,e)]==['probe','probe','probe','observe'], f'Transfer: seed {seed}'
+              assert a['touch'] and b['touch'] and c['touch'], f'Missing physical probe: seed {seed}'
+              assert not e['touch'], f'Unwanted observation contact: seed {seed}'
+              for x in (a,c):
+                  gt=x['known_for_evaluation_only']['ground_truth_displacement_x_m']
+                  s=x['sensed_motion_m']
+                  assert gt>0.035 and s is not None and s>0.025, f'Box not physically moved/perceived: seed {seed}'
+                  assert abs(s-gt)<0.05, f'Sensor disagreement: seed {seed}'
+              assert abs(b['known_for_evaluation_only']['ground_truth_displacement_x_m'])<0.001
+              assert b['sensed_motion_m'] is not None and abs(b['sensed_motion_m'])<0.035
+              print('seed',seed,'new small box delta',c['sensed_motion_m'],
+                    'new large box action',e['action'])
+          stats={
+              'n_seeds':len(seeds), 'n_trials':len(seeds)*4,
+              'small_moved_trials':2*len(seeds),
+              'large_avoidance_trials':len(seeds),
+              'falls':0,
+              'mean_first_small_movement_m':round(mean(d['trials'][0]['sensed_motion_m'] for d in reports),5),
+              'mean_new_small_movement_m':round(mean(d['trials'][2]['sensed_motion_m'] for d in reports),5),
+              'world':'MuJoCo 3.2.7; V5 reference; idealized range and touch',
+          }
+          Path('runs/affordances/summary.json').write_text(json.dumps(stats,indent=2)+'\n')
+          print('AGGREGATE',stats)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: object-contact-affordance-experiment
+          path: runs/affordances
+          retention-days: 14
