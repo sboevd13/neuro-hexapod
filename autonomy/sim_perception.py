@@ -150,7 +150,10 @@ class SimSensorRig:
         self.gyro_id=mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_SENSOR,GYRO_NAME)
         self.foot_ids=np.array([mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_GEOM,
                                         f'foot_collision_{s}') for s in FOOT_NAMES],dtype=int)
-        if self.body_id<0 or self.gyro_id<0 or np.any(self.foot_ids<0):
+        self.tibia_ids=np.array([mujoco.mj_name2id(model,mujoco.mjtObj.mjOBJ_GEOM,
+                                         f'tibia_collision_{s}') for s in FOOT_NAMES],dtype=int)
+        if (self.body_id<0 or self.gyro_id<0 or np.any(self.foot_ids<0)
+                or np.any(self.tibia_ids<0)):
             raise ValueError('Required simulated proprioceptive sensors missing')
         self.gyro_adr=int(model.sensor_adr[self.gyro_id])
 
@@ -163,11 +166,20 @@ class SimSensorRig:
         feet=np.array([(rotation.T@(data.geom_xpos[gid]-body_pos))[:2]
                        for gid in self.foot_ids])
         touched=set()
+        # Spherical feet and terminal tibia capsules both support the gait.
         for k in range(data.ncon):
             c=data.contact[k]
-            for foot in self.foot_ids:
-                if int(c.geom1)==int(foot) or int(c.geom2)==int(foot):
+            ga,gb=int(c.geom1),int(c.geom2)
+            for j,foot in enumerate(self.foot_ids):
+                if ga==int(foot) or gb==int(foot):
                     touched.add(int(foot))
+                    continue
+                if ga==int(self.tibia_ids[j]) or gb==int(self.tibia_ids[j]):
+                    touched.add(int(foot))
+        # Simulation tactile proxy: foot close to floor may carry weight.
+        for foot in self.foot_ids:
+            if float(data.geom_xpos[foot][2])<=.022:
+                touched.add(int(foot))
         return (float(data.sensordata[self.gyro_adr+2]+self.rng.normal(0,self.gyro_std)),
                 feet+self.rng.normal(0,self.foot_std,size=feet.shape),
                 np.array([int(g) in touched for g in self.foot_ids],dtype=bool))
