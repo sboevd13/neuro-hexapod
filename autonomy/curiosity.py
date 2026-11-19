@@ -161,7 +161,7 @@ class CuriosityController:
     Novelty and observed outcomes influence which object is approached next.
     """
 
-    def __init__(self, explorer, objects, minimum_standoff=0.58):
+    def __init__(self, explorer, objects, minimum_standoff=0.47):
         if minimum_standoff < explorer.clearance:
             raise ValueError('Inspection standoff must exceed collision clearance')
         self.explorer = explorer
@@ -223,6 +223,9 @@ class CuriosityController:
                 self.vantage not in distance or
                 self.objects.surveys - self.start_survey > 75):
             self.abandon()
+        if self.active_id is None and (memory.coverage < 0.45 or
+                                       self.objects.inspections >= 2):
+            return default
         if self.active_id is None:
             chosen = self._choose_target(xy, distances, distance)
             if chosen is not None:
