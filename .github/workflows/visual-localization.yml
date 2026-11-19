@@ -61,6 +61,31 @@ jobs:
           assert s['termination']!='fall'
           assert Path('runs/visual/integrated_11/rgb_first.png').read_bytes().startswith(b'\x89PNG')
           PYINTEGRATED
+      - name: Additional continuous physical experiments with camera pose
+        run: |
+          for seed in 7 23; do
+            python autonomous_world.py --seed "$seed" --seconds 80 --vision-odometry \
+              --camera-every 95 --exploration-weight 3.0 \
+              --experiment-model models/active_displacement_ensemble.json \
+              --experiment-experience models/active_push_replay.json \
+              --output "runs/visual/integrated_$seed"
+          done
+          python - <<'PYEXPERIMENT'
+          import json
+          from pathlib import Path
+          rows=[]
+          for seed in (7,23):
+              x=json.loads(Path(f'runs/visual/integrated_{seed}/report.json').read_text())
+              assert x['vision_odometry'] and not x['controller_uses_simulator_pose']
+              assert x['termination']!='fall'
+              assert x['rgb_camera_frames']>=20 and x['rgb_object_detections']>0
+              rows.append({'seed':seed,'physical_touches':x['physical_touches'],
+                           'updates':x['active_network_updates'],
+                           'active_choices':x['active_choices'],
+                           'mapped_fraction':x['map_coverage'],
+                           'position_rmse_m':x['visual_pose_rmse_m']})
+          print('VISION_PHYSICAL',json.dumps(rows))
+          PYEXPERIMENT
       - name: Audit real rendered camera frames and simulated localization
         run: |
           python - <<'PY'
