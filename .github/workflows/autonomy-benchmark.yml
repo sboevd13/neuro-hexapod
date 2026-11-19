@@ -12,6 +12,9 @@ on:
       - 'train_behavior.py'
       - 'models/behavior_v1.json'
       - 'tests/test_behavior.py'
+      - 'tests/test_experience.py'
+      - 'autonomy/experience.py'
+      - 'adapt_behavior.py'
       - 'docs/behavior.md'
       - '.github/workflows/autonomy-benchmark.yml'
 
@@ -27,6 +30,7 @@ jobs:
       - run: python -m pip install 'numpy>=1.26,<3' 'mujoco==3.2.7'
       - run: python -m unittest discover -s tests -p 'test_autonomy.py' -v
       - run: python -m unittest discover -s tests -p 'test_behavior.py' -v
+      - run: python -m unittest discover -s tests -p 'test_experience.py' -v
       - name: Verify trained model on new synthetic scenes
         run: python train_behavior.py --train-samples 12000 --test-samples 3000 --epochs 32 --output runs/benchmark/retrained_behavior.json --report runs/benchmark/behavior_validation.json
       - name: Check learned policy improves simulated action selection
@@ -42,6 +46,17 @@ jobs:
         run: python benchmark_autonomy.py --mode baseline --seconds 60 --seeds 7 11 23 31 47 59 --output runs/benchmark
       - name: Trained local policy on same layouts
         run: python benchmark_autonomy.py --mode learned --behavior-model models/behavior_v1.json --seconds 60 --seeds 7 11 23 31 47 59 --output runs/benchmark
+      - name: Fine-tune on MuJoCo actions from four training scenes
+        run: |
+          python adapt_behavior.py \
+            --model models/behavior_v1.json \
+            --experiences runs/benchmark/learned/seed_{7,11,23,31}/experience.jsonl \
+            --output runs/benchmark/adapted_behavior.json
+      - name: Evaluate adapted model on two held-out scenes
+        run: |
+          python benchmark_autonomy.py --mode learned \
+            --behavior-model runs/benchmark/adapted_behavior.json \
+            --seconds 60 --seeds 47 59 --output runs/adapted
       - name: Show differences without hiding regressions
         run: |
           python - <<'PY'
@@ -52,6 +67,9 @@ jobs:
           learned=json.loads((root/'learned_summary.json').read_text())['summary']
           print('BASELINE',baseline)
           print('LEARNED', learned)
+          adapted=json.loads(Path('runs/adapted/learned_summary.json').read_text())['summary']
+          print('ADAPTED HELD-OUT', adapted)
+          assert adapted['falls'] == 0, 'Adapted model fell on held-out scenes'
           assert learned['falls'] == 0, 'Regression: learned policy fell'
           interventions=sum(e['neural_decisions'] for e in json.loads((root/'learned_summary.json').read_text())['episodes'])
           assert interventions > 0, 'Neural model never acted'
@@ -60,4 +78,6 @@ jobs:
         if: always()
         with:
           name: navigation-benchmark
-          path: runs/benchmark
+          path: |
+            runs/benchmark
+            runs/adapted

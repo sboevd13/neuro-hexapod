@@ -47,7 +47,7 @@ def main():
                    '--seed', str(seed), '--obstacles', str(args.obstacles),
                    '--seconds', str(args.seconds), '--output', str(dest)]
         if args.mode == 'learned':
-            command.extend(['--behavior-model', str(args.behavior_model)])
+            command.extend(['--behavior-model', str(args.behavior_model), '--record-experience'])
         run = subprocess.run(command, capture_output=True, text=True)
         if run.returncode:
             raise RuntimeError(f'Failed seed {seed}: {run.stderr}\n{run.stdout[-3000:]}')
