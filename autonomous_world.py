@@ -24,6 +24,8 @@ from autonomy.affordance_model import features, OutcomePredictor
 from autonomy.active_experiments import (OutcomeEnsemble, experiment_features,
                                          choose_action, dataset)
 from autonomy.interaction import visible_points
+from autonomy.sim_perception import add_sim_sensors, SimSensorRig, SimCamera, save_png
+from autonomy.localization import PlanarEstimator, wrap
 from locomotion_laptop import Config, LocomotionEnv, MODEL_PATH, CONTROL_DT
 
 
@@ -112,9 +114,16 @@ def main():
     p.add_argument('--exploration-weight',type=float,default=1.0,help='Epistemic curiosity weight for bounded experiments')
     p.add_argument('--output',type=Path,default=Path('runs/autonomous_world'))
     p.add_argument('--view',action='store_true')
+    p.add_argument('--vision-odometry',action='store_true',
+                   help='Use RGB camera, noisy planar lidar, IMU and foot odometry instead of MuJoCo truth pose')
+    p.add_argument('--camera-every',type=int,default=60)
+
     args=p.parse_args()
-    if args.seconds<=0 or not 0 <= args.exploration_weight <= 5: p.error('Invalid seconds or exploration weight')
+    if args.seconds<=0 or not 0 <= args.exploration_weight <= 5 or args.camera_every<1:
+        p.error('Invalid seconds, exploration weight or camera interval')
     xml,props,walls=make_world(MODEL_PATH.read_text(),seed=args.seed)
+    if args.vision_odometry:
+        xml=add_sim_sensors(xml)
     model=mujoco.MjModel.from_xml_string(xml)
     mobile=sum(x.mobile for x in props)
     if (model.nu!=18 or model.nq!=25+7*mobile or
@@ -129,6 +138,16 @@ def main():
         if i<0:raise RuntimeError('Experimental prop missing')
         ids.append(i)
     original={str(i):np.asarray(env.data.geom_xpos[i][:2]).copy() for i in ids}
+    visual_rig=(SimSensorRig(model,walls,ids,seed=args.seed)
+                if args.vision_odometry else None)
+    localizer=PlanarEstimator(matching=True) if args.vision_odometry else None
+    rgb_camera=SimCamera(model) if args.vision_odometry else None
+    visual_count=0
+    visual_detections=0
+    visual_visible_frames=0
+    last_visual_tick=-100000
+    visual_examples=[]
+    visual_errors=[]
     spatial=OccupancyMemory()
     frontier=FrontierExplorer(spatial)
     objects=ObjectMemory(args.seed)
@@ -215,13 +234,46 @@ def main():
 
     try:
         for tick in range(math.ceil(args.seconds/CONTROL_DT)):
-            xy,yaw,distances,hits=sensor_view(env,walls,ids)
+            if visual_rig is None:
+                xy,yaw,distances,hits=sensor_view(env,walls,ids)
+            else:
+                sample=visual_rig.read(env.data,scan=True)
+                pose=localizer.integrate(sample.gyro_z,sample.feet_xy,
+                                         sample.contacts,CONTROL_DT,current_command)
+                distances,hits=sample.ranges,sample.hits
+                if tick%15==0:
+                    pose=localizer.correct_with_map(spatial,distances,hits)
+                    visual_errors.append(float(np.linalg.norm(
+                        pose[:2]-env.data.qpos[:2]))) # audit only
+                xy,yaw=pose[:2].copy(),float(pose[2])
+                if tick%args.camera_every==0:
+                    rgb,depth,found=rgb_camera.read(env.data)
+                    if not np.all(np.isfinite(depth)):
+                        raise RuntimeError('Invalid RGB-D camera return')
+                    visual_count+=1
+                    visual_detections+=len(found)
+                    if found:
+                        visual_visible_frames+=1
+                        last_visual_tick=tick
+                    if visual_count==1 or tick+args.camera_every>=args.seconds/CONTROL_DT:
+                        path=args.output/('rgb_first.png' if visual_count==1 else 'rgb_last.png')
+                        save_png(path,rgb)
+                        visual_examples.append(path.name)
+
             if tick%15==0:
                 scans+=1
                 spatial.observe(xy,yaw,distances,hits)
                 default,kind,waypoint=frontier.command(xy,yaw)
                 if phase=='explore':
-                    cmd,decision,object_point=curiosity.command(xy,yaw,distances,hits,(default,kind,waypoint))
+                    if (visual_rig is not None and
+                            tick-last_visual_tick>round(6/CONTROL_DT) and
+                            curiosity.active_id is None):
+                        # Until RGB confirms an object, scan unknown frontiers.
+                        objects.observe(xy,yaw,distances,hits)
+                        cmd,decision,object_point=default,kind,None
+                    else:
+                        cmd,decision,object_point=curiosity.command(xy,yaw,distances,hits,
+                                                                    (default,kind,waypoint))
                     current_command=cmd
                     if decision=='inspect_object' and object_point is not None:
                         point=np.asarray(object_point,dtype=float)
@@ -299,6 +351,7 @@ def main():
             term='time_limit'
     finally:
         if viewer is not None: viewer.close()
+        if rgb_camera is not None:rgb_camera.close()
         args.output.mkdir(parents=True,exist_ok=True)
         objects.save(args.output/'objects.json')
         spatial.save(args.output/'map.json',scene_seed=args.seed)
@@ -325,7 +378,22 @@ def main():
                 'active_prior_samples':initial_active_samples,
                 'active_new_labeled_samples':len(active_entries)-initial_active_samples,
                 'properties_for_audit_only':audit,
-                'limitations':'Idealized range, simulator truth pose, approximate AABB rays, V5 reference only; not hardware-safe or semantic object recognition'}
+                'vision_odometry':bool(args.vision_odometry),
+                'rgb_camera_frames':visual_count,
+                'rgb_object_detections':visual_detections,
+                'rgb_frames_with_objects':visual_visible_frames,
+                'rgb_snapshots':visual_examples,
+                'visual_pose_rmse_m':(round(float(np.sqrt(np.mean(np.square(visual_errors)))),5)
+                                      if visual_errors else None),
+                'foot_odometry_updates':localizer.foot_updates if localizer else 0,
+                'scan_matching_corrections':localizer.scan_corrections if localizer else 0,
+                'controller_uses_simulator_pose':not args.vision_odometry,
+                'limitations':('Vision mode: RGB-cyan segmentation, synthetic noisy 23-beam ranger, '
+                               'gyro+foot-contact estimated pose and local scan alignment. '
+                               'Foot and camera readings are simulated, not real hardware. '
+                               'No visual SLAM loop closure; V5 reference, no force-safe real pushing.'
+                               if args.vision_odometry else
+                               'Idealized range, simulator truth pose, approximate AABB rays, V5 reference only; not hardware-safe or semantic object recognition')}
         (args.output/'report.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
         print('AUTONOMOUS_WORLD_REPORT',json.dumps(report,allow_nan=False),flush=True)
 

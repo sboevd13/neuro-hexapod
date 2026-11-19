@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 30
     env:
       OPENBLAS_NUM_THREADS: '1'
-      MUJOCO_GL: osmesa
+      MUJOCO_GL: egl
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,9 +24,7 @@ jobs:
           python-version: '3.11'
       - name: Install MuJoCo rendering dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libosmesa6 libgl1-mesa-dri
-          python -m pip install 'mujoco==3.2.7' 'numpy>=1.26,<3' 'PyOpenGL>=3.1.7'
+          python -m pip install 'mujoco==3.2.7' 'numpy>=1.26,<3'
       - name: Test simulated sensors, object detection and foot odometry
         run: python -m unittest discover -s tests -p 'test_sim_perception.py' -v
       - name: Test camera and estimated-pose navigation on three rooms
@@ -40,6 +38,27 @@ jobs:
             python visual_autonomy.py --seed "$seed" --seconds 22 --camera-every 90 --localization odometry --output "runs/visual/odometry_$seed"
           done
           python visual_autonomy.py --seed 7 --seconds 22 --camera-every 90 --localization oracle --output runs/visual/oracle_7
+      - name: Integrated camera, mapping and active physical curiosity
+        run: |
+          python autonomous_world.py --seed 11 --seconds 55 --vision-odometry \
+            --camera-every 65 \
+            --experiment-model models/active_displacement_ensemble.json \
+            --experiment-experience models/active_push_replay.json \
+            --output runs/visual/integrated_11
+          python - <<'PYINTEGRATED'
+          import json
+          from pathlib import Path
+          s=json.loads(Path('runs/visual/integrated_11/report.json').read_text())
+          print('RGB_INTEGRATION',s['rgb_camera_frames'],s['rgb_object_detections'],
+                s['visual_pose_rmse_m'],s['physical_touches'],s['active_network_updates'])
+          assert s['vision_odometry'] and not s['controller_uses_simulator_pose']
+          assert s['rgb_camera_frames']>=10
+          assert s['rgb_object_detections']>0
+          assert s['foot_odometry_updates']>10
+          assert s['sensor_surveys']>=30
+          assert s['termination']!='fall'
+          assert Path('runs/visual/integrated_11/rgb_first.png').read_bytes().startswith(b'\x89PNG')
+          PYINTEGRATED
       - name: Audit real rendered camera frames and simulated localization
         run: |
           python - <<'PY'
