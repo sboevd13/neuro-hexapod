@@ -18,6 +18,7 @@ import mujoco
 import numpy as np
 
 from autonomy.explorer import FrontierExplorer, OccupancyMemory, range_scan
+from autonomy.curiosity import ObjectMemory, CuriosityController
 from autonomy.scene import make_scene
 from autonomy.behavior import ACTIONS, state_features
 from autonomy.temporal import (TemporalModel, safe_mask, approve_override,
@@ -83,6 +84,10 @@ def parse_args():
     p.add_argument('--speed', type=float, default=1.0, help='Viewer playback speed')
     p.add_argument('--output', type=Path, default=Path('runs/autonomy'))
     p.add_argument('--continue-map', action='store_true', help='Load the saved map for this seed')
+    p.add_argument('--curiosity', action='store_true',
+                   help='Opt-in object discovery, inspection and persistent novelty memory')
+    p.add_argument('--continue-objects', action='store_true',
+                   help='Continue object memory for the same fixed scene and seed')
     p.add_argument('--behavior-model', type=Path, help='Optional trained local action-value model')
     p.add_argument('--record-experience', action='store_true', help='Store rewards from executed neural decisions')
     p.add_argument('--temporal-model', type=Path,
@@ -94,6 +99,10 @@ def parse_args():
     args = p.parse_args()
     if args.behavior_model and args.temporal_model:
         p.error('Select only one of --behavior-model and --temporal-model')
+    if args.curiosity and (args.temporal_model or args.behavior_model):
+        p.error('--curiosity is a separate experiment; do not combine learned controllers')
+    if args.continue_objects and not args.curiosity:
+        p.error('--continue-objects requires --curiosity')
     if not 0 <= args.temporal_epsilon <= 1:
         p.error('--temporal-epsilon must be in [0,1]')
     if args.temporal_epsilon and not args.temporal_model:
@@ -124,6 +133,10 @@ def main():
     else:
         memory = OccupancyMemory()
     explorer = FrontierExplorer(memory)
+    object_path = args.output / 'objects.json'
+    object_memory = (ObjectMemory.load(object_path, scene_seed=args.seed)
+                     if args.continue_objects else ObjectMemory(args.seed)) if args.curiosity else None
+    curiosity = CuriosityController(explorer, object_memory) if args.curiosity else None
     behavior = None
     if args.behavior_model:
         from autonomy.behavior import BehaviorModel
@@ -195,6 +208,9 @@ def main():
                 ranges, hits = range_scan(xy, yaw, scene.obstacles)
                 memory.observe(xy, yaw, ranges, hits)
                 command, decision, waypoint = explorer.command(xy, yaw)
+                if curiosity is not None:
+                    command, decision, waypoint = curiosity.command(
+                        xy, yaw, ranges, hits, (command, decision, waypoint))
                 # Close the preceding sequential action after obtaining this
                 # scan/map update and the *next* route waypoint.
                 if pending_temporal is not None:
@@ -294,6 +310,8 @@ def main():
                                  1-2*(env.data.qpos[5]**2+env.data.qpos[6]**2))
                 memory.mark_contact(contact_xy)
                 explorer.goal = None
+                if curiosity is not None:
+                    curiosity.abandon(contact=True)
                 away = now_xy - contact_xy
                 magnitude = np.linalg.norm(away)
                 if magnitude > 1e-5:
@@ -344,6 +362,8 @@ def main():
         if viewer is not None:
             viewer.close()
         memory.save(map_path, scene_seed=args.seed)
+        if object_memory is not None:
+            object_memory.save(object_path)
         metrics = {
             'scene_seed': args.seed, 'obstacles': args.obstacles,
             'locomotion': 'checkpoint' if policy is not None else 'reference',
@@ -360,6 +380,13 @@ def main():
             'behavior': ('temporal_double_dqn' if temporal_model is not None else
                          'trained_local_value' if behavior is not None else 'frontier_baseline'),
             'localization': 'simulator_ground_truth', 'sensor': 'idealized_planar_ranges',
+            'object_mode': 'range_curiosity' if curiosity is not None else 'disabled',
+            'object_hypotheses': len(object_memory.tracks) if object_memory else 0,
+            'object_inspections': object_memory.inspections if object_memory else 0,
+            'object_attempts': curiosity.attempts if curiosity else 0,
+            'object_commands': curiosity.commands_changed if curiosity else 0,
+            'object_contact_events': object_memory.contact_events if object_memory else 0,
+            'intrinsic_reward': round(object_memory.total_intrinsic_reward, 4) if object_memory else 0.,
         }
         (args.output / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n')
         print(json.dumps(metrics, indent=2), flush=True)

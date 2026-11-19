@@ -1,0 +1,73 @@
+name: Object curiosity in MuJoCo
+
+on:
+  push:
+    branches: [feature/object-curiosity-v1]
+  pull_request:
+    paths:
+      - autonomy/curiosity.py
+      - explore_laptop.py
+      - benchmark_autonomy.py
+      - tests/test_curiosity.py
+      - docs/curiosity.md
+      - .github/workflows/object-curiosity.yml
+
+jobs:
+  curiosity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install physics dependencies
+        run: python -m pip install 'numpy>=1.26,<3' 'mujoco==3.2.7'
+      - name: Check memory and curiosity unit tests
+        run: |
+          python -m unittest discover -s tests -p test_autonomy.py -v
+          python -m unittest discover -s tests -p test_curiosity.py -v
+      - name: Baseline navigation, six rooms
+        run: python benchmark_autonomy.py --mode baseline --seconds 60 --seeds 7 11 23 31 47 59 --output runs/object_trial
+      - name: Curious navigation, same rooms
+        run: python benchmark_autonomy.py --mode curiosity --seconds 60 --seeds 7 11 23 31 47 59 --output runs/object_trial
+      - name: Print measured differences
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base=json.loads(Path('runs/object_trial/baseline_summary.json').read_text())['summary']
+          curious=json.loads(Path('runs/object_trial/curiosity_summary.json').read_text())['summary']
+          print('BASELINE',base)
+          print('CURIOSITY',curious)
+          assert base['falls']==0
+          assert curious['falls']==0, 'Robot fell; not a successful demonstration'
+          assert curious['total_object_hypotheses'] > 0, 'No objects were detected'
+          assert curious['total_object_commands'] > 0, 'Curiosity had no motor effect'
+          # Do not require performance gains or zero contact before observing
+          # results; both are measured and must be reported honestly.
+          PY
+      - name: Baseline on six additional unseen rooms
+        run: python benchmark_autonomy.py --mode baseline --seconds 60 --seeds 71 83 97 109 113 127 --output runs/object_unseen
+      - name: Curiosity on same unseen rooms
+        run: python benchmark_autonomy.py --mode curiosity --seconds 60 --seeds 71 83 97 109 113 127 --output runs/object_unseen
+      - name: Report independent validation
+        run: |
+          python - <<'PYCI'
+          import json
+          from pathlib import Path
+          base=json.loads(Path('runs/object_unseen/baseline_summary.json').read_text())['summary']
+          curious=json.loads(Path('runs/object_unseen/curiosity_summary.json').read_text())['summary']
+          print('UNSEEN BASELINE',base)
+          print('UNSEEN CURIOSITY',curious)
+          assert curious['falls']==0
+          assert curious['total_object_commands']>0
+          PYCI
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: object-curiosity-benchmark
+          path: |
+            runs/object_trial
+            runs/object_unseen
+          retention-days: 14
