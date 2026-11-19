@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument('--speed', type=float, default=1.0, help='Viewer playback speed')
     p.add_argument('--output', type=Path, default=Path('runs/autonomy'))
     p.add_argument('--continue-map', action='store_true', help='Load the saved map for this seed')
+    p.add_argument('--behavior-model', type=Path, help='Optional trained local action-value model')
     args = p.parse_args()
     if args.seconds <= 0 or args.speed <= 0 or not 0 <= args.obstacles <= 12:
         p.error('seconds/speed must be positive; obstacles must be in 0..12')
@@ -71,6 +72,15 @@ def main():
     else:
         memory = OccupancyMemory()
     explorer = FrontierExplorer(memory)
+    behavior = None
+    if args.behavior_model:
+        from autonomy.behavior import BehaviorModel
+        behavior = BehaviorModel.load(args.behavior_model)
+        print(f'Behavior model: {args.behavior_model} (frozen evaluation)')
+    neural_decisions = 0
+    neural_overrides = 0
+    last_neural_action = None
+    repeated_turns = 0
     args.output.mkdir(parents=True, exist_ok=True)
     previous_xy = env.data.qpos[:2].copy()
     collisions = 0
@@ -103,7 +113,32 @@ def main():
                                  1 - 2 * (env.data.qpos[5]**2 + env.data.qpos[6]**2))
                 ranges, hits = range_scan(xy, yaw, scene.obstacles)
                 memory.observe(xy, yaw, ranges, hits)
-                command, decision, _ = explorer.command(xy, yaw)
+                command, decision, waypoint = explorer.command(xy, yaw)
+                if behavior is not None and waypoint is not None:
+                    from autonomy.behavior import ACTIONS, state_features
+                    # Use the trained local reflex only near uncertain obstacles.
+                    # Keep global frontier planning and a hard minimum clearance.
+                    if min(ranges[10:13]) < 0.68:
+                        candidate = behavior.choose(
+                            state_features(ranges, yaw, xy, waypoint), ranges)
+                        neural_decisions += 1
+                        # Prevent repeated neural turning from immobilizing navigation.
+                        if candidate != 0:
+                            repeated_turns = repeated_turns+1 if candidate == last_neural_action else 1
+                        else:
+                            repeated_turns = 0
+                        last_neural_action = candidate
+                        # Keep planner rotations for large heading errors.
+                        error = math.atan2(waypoint[1]-xy[1], waypoint[0]-xy[0]) - yaw
+                        error = math.atan2(math.sin(error), math.cos(error))
+                        if (abs(error) < 0.60 and repeated_turns <= 6):
+                            learned_command = np.array(ACTIONS[candidate], dtype=float)
+                            if not np.allclose(learned_command, command):
+                                neural_overrides += 1
+                            command, decision = learned_command, 'neural'
+                    else:
+                        repeated_turns = 0
+                        last_neural_action = None
                 if decision == 'complete':
                     ended = 'explored_known_space'
                     break
@@ -165,6 +200,8 @@ def main():
             'coverage': round(memory.coverage, 5),
             'mapped_cells': int(np.count_nonzero(memory.cells != memory.UNKNOWN)),
             'goal_changes': explorer.goals_reached, 'sensor_surveys': memory.survey_count,
+            'neural_decisions': neural_decisions, 'neural_overrides': neural_overrides,
+            'behavior': 'trained_local_value' if behavior is not None else 'frontier_baseline',
             'localization': 'simulator_ground_truth', 'sensor': 'idealized_planar_ranges',
         }
         (args.output / 'metrics.json').write_text(json.dumps(metrics, indent=2) + '\n')
