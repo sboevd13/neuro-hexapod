@@ -204,3 +204,27 @@ python explore_laptop.py --reference --seed 7 --seconds 90 \
 Подробности: [docs/curiosity.md](docs/curiosity.md),
 [validation/object_curiosity_v1.json](validation/object_curiosity_v1.json).
 \n## Experimental object interaction: learning what moves\n\nIn `feature/object-affordances-v1`, a simulated physical V5 hexapod\nexecutes a short push probe, watches the object surface using idealized\nrange measurements, and remembers which *apparent width class* moved.\nIt then decides whether to probe or avoid probing a second object from\nthe same class. **This is not RGB vision, grasping or end-to-end RL.**\n\n```bash\npython interact_laptop.py --seed 7 --seconds 8 --output runs/interaction\n```\n\nSix-seed (24-trial) headless MuJoCo test passed: movable boxes moved\n7.9 cm on initial probes and 14.8 cm for fresh similar objects on average,\nfixed boxes did not move, and repeat-class fixed boxes were left alone.\nNo robot falls in these narrow controlled trials. Results and limitations:\n[docs/interaction.md](docs/interaction.md),\n[validation/object_affordances_v1.json](validation/object_affordances_v1.json).\n
+
+## Experiment: embodied learning of object motion
+
+The `feature/embodied-learning-v1` branch includes a separate, optional MuJoCo
+research workflow with independently randomized object width, mass, friction
+and mobility; a probe-conditioned neural outcome predictor; and a single-scene
+room controller combining range-based mapping, curiosity, bounded physical
+pushing and online experience updates. Existing V5/PPO gait and baseline
+navigation remain available and unchanged by default.
+
+```bash
+python autonomous_world.py --seed 7 --seconds 90 \
+  --model models/affordance_outcome_experimental.json \
+  --experience models/affordance_training_experiences.json \
+  --output runs/world_demo --view
+```
+
+In CI, 32 training and 16 independent test physical scenes produced a small
+Brier-score improvement over a constant predictor (0.226 vs 0.243), with
+unchanged classification accuracy (62.5%). Three continuous multi-object rooms
+produced five physical contacts and two online model updates.
+No result is asserted for hardware control, semantics, force safety or long-term
+learned animal cognition. [Detailed protocol](docs/embodied_learning.md) and
+[reproducible results](validation/embodied_learning_v1.json).
