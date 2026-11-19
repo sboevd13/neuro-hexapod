@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .explorer import SCAN_ANGLES
+from .explorer import SCAN_ANGLES, FrontierExplorer
 
 
 @dataclass
@@ -161,10 +161,13 @@ class CuriosityController:
     Novelty and observed outcomes influence which object is approached next.
     """
 
-    def __init__(self, explorer, objects, minimum_standoff=0.47):
+    def __init__(self, explorer, objects, minimum_standoff=0.52):
         if minimum_standoff < explorer.clearance:
             raise ValueError('Inspection standoff must exceed collision clearance')
         self.explorer = explorer
+        # Keep baseline navigation unchanged; object approaches need more room.
+        self.inspection_planner = FrontierExplorer(explorer.memory,
+                                                   clearance=max(0.38, explorer.clearance))
         self.objects = objects
         self.minimum_standoff = float(minimum_standoff)
         self.active_id = None
@@ -215,7 +218,7 @@ class CuriosityController:
         self.objects.observe(xy, yaw, distances, hits)
         memory = self.explorer.memory
         xy = np.asarray(xy, dtype=float)
-        distance, parent = self.explorer._plan(memory.cell(xy))
+        distance, parent = self.inspection_planner._plan(memory.cell(xy))
         if not distance:
             self.abandon()
             return default
@@ -223,9 +226,6 @@ class CuriosityController:
                 self.vantage not in distance or
                 self.objects.surveys - self.start_survey > 75):
             self.abandon()
-        if self.active_id is None and (memory.coverage < 0.45 or
-                                       self.objects.inspections >= 2):
-            return default
         if self.active_id is None:
             chosen = self._choose_target(xy, distances, distance)
             if chosen is not None:
