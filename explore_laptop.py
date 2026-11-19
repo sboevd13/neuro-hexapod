@@ -229,7 +229,6 @@ def main():
                         temporal_repeat = 0
                         temporal_last = None
                 if behavior is not None and waypoint is not None:
-                    from autonomy.behavior import ACTIONS, state_features
                     # Use the trained local reflex only near uncertain obstacles.
                     # Keep global frontier planning and a hard minimum clearance.
                     if min(ranges[10:13]) < 0.68:
