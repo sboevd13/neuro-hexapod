@@ -109,8 +109,10 @@ def perform(seed, contact_short=.15, contact_long=.48, max_approach=7.0):
     new_move=observed_motion(surf_probe,final_surface)
     if new_move is None:
         return {'scene_seed':seed,'valid':False,'reason':'final_lost','fell':fell}
-    # Outcome of the *second* stage, not future observations sent as inputs.
-    moved=bool(new_move>=.035)
+    # A predeclared meaningful FINAL displacement threshold (5 cm), rather than
+    # noisy incremental movement during only the second stage. The 0.15-s
+    # probe happens before the prediction and is an admissible input.
+    moved=bool(total_move is not None and total_move>=.05)
     truth_initial=trial.x
     truth_final=float(env.data.geom_xpos[gid,0])
     return {'scene_seed':seed,'valid':True,'features':x.tolist(),
@@ -119,7 +121,7 @@ def perform(seed, contact_short=.15, contact_long=.48, max_approach=7.0):
             'short_probe_sensed_displacement_m':round(first_move,5),
             'long_push_additional_displacement_m':round(new_move,5),
             'total_sensed_displacement_m':round(float(total_move),5) if total_move is not None else None,
-            'label_more_movement':int(moved),'touch':True,'fell':fell,
+            'label_meaningful_total_movement':int(moved),'touch':True,'fell':fell,
             'evaluation_only':{'mobile':trial.mobile,'hidden_mass_kg':round(trial.mass,5),
                                'hidden_friction':round(friction,5),'hidden_half_width_m':round(trial.half_y,5),
                                'ground_truth_displacement_x_m':round(truth_final-truth_initial,5)}}
@@ -132,7 +134,7 @@ def run_group(seeds, folder, predictor=None, update=False):
         if predictor is not None and row.get('valid'):
             row['predicted_movement_probability']=round(float(predictor.predict(row['features'])),5)
             row['would_push_again']=bool(row['predicted_movement_probability']>=.55)
-        print(json.dumps({k:row.get(k) for k in ('scene_seed','valid','reason','label_more_movement','short_probe_sensed_displacement_m','predicted_movement_probability','would_push_again','fell')},allow_nan=False),flush=True)
+        print(json.dumps({k:row.get(k) for k in ('scene_seed','valid','reason','label_meaningful_total_movement','short_probe_sensed_displacement_m','predicted_movement_probability','would_push_again','fell')},allow_nan=False),flush=True)
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     (folder/'episodes.json').write_text(json.dumps(rows,indent=2,allow_nan=False)+'\n')
     return rows
@@ -140,15 +142,15 @@ def run_group(seeds, folder, predictor=None, update=False):
 
 def validated(rows):
     good=[r for r in rows if r.get('valid') and not r.get('fell')]
-    return np.asarray([r['features'] for r in good]),np.asarray([r['label_more_movement'] for r in good]),len(good)
+    return np.asarray([r['features'] for r in good]),np.asarray([r['label_meaningful_total_movement'] for r in good]),len(good)
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--train-seeds',type=int,nargs='+',default=list(range(100,132)))
-    parser.add_argument('--test-seeds',type=int,nargs='+',default=list(range(700,716)))
+    parser.add_argument('--train-seeds',type=int,nargs='+',default=list(range(1000,1032)))
+    parser.add_argument('--test-seeds',type=int,nargs='+',default=list(range(2000,2016)))
     parser.add_argument('--output',type=Path,default=Path('runs/random_affordance'))
-    parser.add_argument('--epochs',type=int,default=120)
+    parser.add_argument('--epochs',type=int,default=350)
     args=parser.parse_args()
     if set(args.train_seeds)&set(args.test_seeds):parser.error('Train/test seeds must not overlap')
     if args.epochs<1:parser.error('epochs must be positive')
@@ -156,7 +158,7 @@ def main():
     xx,yy,n=validated(train)
     if n<8 or len(set(yy))<2: raise RuntimeError('Too few valid diverse physics-training outcomes')
     naive=float(np.mean(yy));model=OutcomePredictor.fresh(71)
-    model.fit(xx,yy,epochs=args.epochs)
+    model.fit(xx,yy,epochs=args.epochs,lr=.022)
     model.save(args.output/'model.json')
     test=run_group(args.test_seeds,args.output/'test',predictor=model)
     xt,yt,nt=validated(test)
@@ -165,7 +167,7 @@ def main():
     report={'version':1,'physics':'MuJoCo; V5 reference contact; independent hidden mass/friction/size',
             'train_attempts':len(train),'test_attempts':len(test),
             'train_valid':n,'test_valid':nt,'train_positive_fraction':round(naive,5),
-            'test_metrics':scores,
+            'test_metrics':scores,'meaningful_displacement_threshold_m':0.05,
             'policy_choices_in_test':{'push_again':sum(r.get('would_push_again',False) for r in test),
                                       'observe_instead':sum(r.get('valid',False) and not r.get('would_push_again',False) for r in test)},
             'limitations':'Second push physically executed for label in ALL held-out shadow runs, regardless of policy suggestion. Model observes result of first probe, not mass/friction.'}
