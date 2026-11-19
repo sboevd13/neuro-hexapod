@@ -42,3 +42,13 @@ python autonomous_world.py --seed 11 --seconds 90 --view \
 ```
 
 See [docs/active_learning.md](docs/active_learning.md) and the CI report.
+
+
+Verified 260-object physics benchmark (Nov 2026): at 64 revealed labels,
+ensemble-disagreement acquisition scored 1.84 cm MAE vs 1.91 cm for random,
+on 60 unseen objects. A model trained on 200 labels scored 1.81 cm MAE vs
+3.28 cm for the constant baseline. Five gentle interactions and five online
+updates were completed in 3 continuous simulation rooms. These are limited
+research results, not proven real-world generalization. Ready-to-use model:
+`models/active_displacement_ensemble.json`; experiences:
+`models/active_push_replay.json`.

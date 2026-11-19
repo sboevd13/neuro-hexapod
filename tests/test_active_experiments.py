@@ -79,6 +79,16 @@ class ActiveExperimentTests(unittest.TestCase):
         veto=choose_action(DisagreeingEnsemble(),self.x[0,:5],safety_ok=False,novelty_weight=2.)
         self.assertEqual(veto['action'],'observe')
 
+    def test_choice_can_stop_or_use_longer_bounded_action(self):
+        class Confident:
+            def __init__(self, means):self.means=np.asarray(means)
+            def predict(self, xs):return self.means,np.zeros(2)
+        sample=self.x[1,:5]
+        self.assertEqual(choose_action(Confident([-.03,-.05]),sample)['action'],'observe')
+        long=choose_action(Confident([.025,.12]),sample)
+        self.assertEqual(long['action'],'long_push')
+        self.assertEqual(long['duration'],ACTION_DURATIONS[1])
+
     def test_same_initial_labels_and_pure_label_budgets(self):
         train=[{'features':x.tolist(),'displacement_m':float(y)} for x,y in zip(self.x[:70],self.y[:70])]
         test=[{'features':x.tolist(),'displacement_m':float(y)} for x,y in zip(self.x[70:],self.y[70:])]

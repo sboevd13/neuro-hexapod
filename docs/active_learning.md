@@ -58,3 +58,31 @@ Safety: the upper layers veto actions on low body height, use bounded durations,
 - A small network and 260 randomized procedural examples cannot establish universal transfer to unfamiliar objects, landscapes or real hardware.
 - Regression improvement and benefit of active label acquisition are separate questions; results may show no superiority over random strategies.
 - Original navigation and locomotion stay the defaults; the experimental features require explicit CLI flags and branch selection.
+
+## Verified benchmark, 19 November 2026
+
+[End-to-end successful GitHub Actions](https://github.com/sboevd13/neuro-hexapod/actions/runs/44556463382) simulated **260 independent objects**, with 200 eligible training scenes and 60 held-out scenes. Each strategy was repeated three times with the *same* eight initially revealed labels per repetition. MAE is measured on **the same 60 unseen objects** for every model; lower is better.
+
+| Revealed second-push results | Random MAE | Fixed heuristic MAE | Ensemble disagreement MAE |
+| ---: | ---: | ---: | ---: |
+| 8 | 3.52 cm | 3.52 cm | 3.52 cm |
+| 16 | 2.75 cm | 2.74 cm | 2.34 cm |
+| 32 | 1.98 cm | 3.09 cm | 1.88 cm |
+| 64 | 1.91 cm | 2.85 cm | 1.84 cm |
+
+The 200-label full-pool model scored **1.814 cm MAE** and **2.254 cm RMSE** on the independent test set; predicting a constant training-label mean scored **3.280 cm MAE** and **3.830 cm RMSE**. The uncertainty selection has a *small* observed edge over random acquisition at 64 labels, but the experiment has only three selection seeds; this is not evidence of statistically reliable superiority.
+
+The regression ensemble's mean **disagreement was 0.375 cm**, much lower than its 1.814 cm mean prediction error. **Do not interpret disagreement as a calibrated confidence interval.** In the combined world, the model often forecast negative movement on surfaces that moved forward; this is an out-of-distribution limitation of the isolated-object training protocol.
+
+Three additional **continuous 90-second world trials** used the frozen model plus sensor-only replay, then performed bounded uncertainty-driven gentle pushes (0.24 seconds) and immediate weight updates: **five full extra physical pushes, five valid labels, five online updates and zero falls**. All five decisions were gentle epistemic probes; neither the ``long_push`` nor `observe` branch was selected in those particular runs. All three choices have isolated unit tests, but the full-world action diversity is not yet demonstrated.
+
+The definitive machine-readable measurements are in `validation/active_learning_v1.json`. Trained checkpoint: `models/active_displacement_ensemble.json`; sanitized training replay: `models/active_push_replay.json`. Unlike audit files, these contain neither masses nor simulator mobility flags. Reproduce the continuous-world run **without regenerating 260 objects**:
+
+```bash
+python autonomous_world.py --seed 11 --seconds 90 --view \
+  --experiment-model models/active_displacement_ensemble.json \
+  --experiment-experience models/active_push_replay.json \
+  --exploration-weight 2.0 --output runs/active_demo
+```
+
+This workflow is a research baseline, not reliable inference of hidden physical properties or a hardware-safe autonomous agent.
