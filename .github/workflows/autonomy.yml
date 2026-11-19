@@ -25,7 +25,7 @@ jobs:
       - name: Run exploration unit tests
         run: python -m unittest discover -s tests -p test_autonomy.py -v
       - name: Run headless MuJoCo smoke test
-        run: python explore_laptop.py --reference --seconds 5 --seed 7 --output runs/ci
+        run: python explore_laptop.py --reference --seconds 45 --seed 7 --output runs/ci
       - name: Validate saved run
         run: |
           python - <<'PY'
