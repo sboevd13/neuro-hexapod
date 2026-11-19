@@ -47,9 +47,27 @@ jobs:
           # Do not require performance gains or zero contact before observing
           # results; both are measured and must be reported honestly.
           PY
+      - name: Baseline on six additional unseen rooms
+        run: python benchmark_autonomy.py --mode baseline --seconds 60 --seeds 71 83 97 109 113 127 --output runs/object_unseen
+      - name: Curiosity on same unseen rooms
+        run: python benchmark_autonomy.py --mode curiosity --seconds 60 --seeds 71 83 97 109 113 127 --output runs/object_unseen
+      - name: Report independent validation
+        run: |
+          python - <<'PYCI'
+          import json
+          from pathlib import Path
+          base=json.loads(Path('runs/object_unseen/baseline_summary.json').read_text())['summary']
+          curious=json.loads(Path('runs/object_unseen/curiosity_summary.json').read_text())['summary']
+          print('UNSEEN BASELINE',base)
+          print('UNSEEN CURIOSITY',curious)
+          assert curious['falls']==0
+          assert curious['total_object_commands']>0
+          PYCI
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: object-curiosity-benchmark
-          path: runs/object_trial
+          path: |
+            runs/object_trial
+            runs/object_unseen
           retention-days: 14
