@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "description": "Randomized MuJoCo object-affordance prediction and integrated continuous multi-object behavior",
+  "verified_actions_run": "https://github.com/sboevd13/neuro-hexapod/actions/runs/44551037040",
+  "physics_dataset": {
+    "version": 1,
+    "physics": "MuJoCo; V5 reference contact; independent hidden mass/friction/size",
+    "train_attempts": 32,
+    "test_attempts": 16,
+    "train_valid": 32,
+    "test_valid": 16,
+    "train_positive_fraction": 0.53125,
+    "test_metrics": {
+      "samples": 16,
+      "positive_rate": 0.625,
+      "neural_brier": 0.22636,
+      "baseline_brier": 0.24316,
+      "neural_cross_entropy": 0.64557,
+      "baseline_cross_entropy": 0.67946,
+      "neural_accuracy": 0.625,
+      "baseline_accuracy": 0.625
+    },
+    "meaningful_displacement_threshold_m": 0.05,
+    "policy_choices_in_test": {
+      "push_again": 7,
+      "observe_instead": 9
+    },
+    "limitations": "Second push physically executed for label in ALL held-out shadow runs, regardless of policy suggestion. Model observes result of first probe, not mass/friction."
+  },
+  "continuous_session_summary": {
+    "rooms": 3,
+    "room_seeds": [
+      7,
+      11,
+      23
+    ],
+    "seconds_per_room": 90,
+    "mean_map_coverage": 0.74979,
+    "object_hypotheses": 9,
+    "object_inspections": 5,
+    "physical_contacts": 5,
+    "new_labeled_examples": 2,
+    "online_network_updates": 2,
+    "safely_declined_long_pushes": 3,
+    "completed_long_pushes": 2,
+    "falls": 0
+  },
+  "continuous_session_runs": [
+    {
+      "seed": 7,
+      "termination": "time_limit",
+      "elapsed_s": 90.0,
+      "sensor_surveys": 300,
+      "map_coverage": 0.73562,
+      "object_hypotheses": 3,
+      "object_inspections": 2,
+      "physical_touches": 2,
+      "interactions": [
+        {
+          "note": "model_chose_observe",
+          "target_surface_at_start": [
+            0.5792900000000001,
+            -0.33638811316951167
+          ],
+          "total_sensed_movement_m": -0.01165,
+          "short_probe_movement_m": -0.0116451171584479,
+          "predicted_probability": 0.4813578141927265,
+          "label_meaningful_movement": 0,
+          "physics_time_s": 7.04,
+          "robot_xy_at_end": [
+            0.4816,
+            -0.1695
+          ],
+          "robot_to_target_distance_m": 0.2093
+        },
+        {
+          "note": "model_chose_observe",
+          "target_surface_at_start": [
+            0.5869160890666347,
+            0.29877919875228326
+          ],
+          "total_sensed_movement_m": -0.00938,
+          "short_probe_movement_m": -0.009380817178086372,
+          "predicted_probability": 0.49676766586732857,
+          "label_meaningful_movement": 0,
+          "physics_time_s": 18.3,
+          "robot_xy_at_end": [
+            0.3921,
+            0.2354
+          ],
+          "robot_to_target_distance_m": 0.2083
+        }
+      ],
+      "previous_training_samples": 32,
+      "new_labeled_samples": 0,
+      "online_network_updates": 0,
+      "limitations": "Idealized range, simulator truth pose, approximate AABB rays, V5 reference only; not hardware-safe or semantic object recognition"
+    },
+    {
+      "seed": 11,
+      "termination": "time_limit",
+      "elapsed_s": 90.0,
+      "sensor_surveys": 300,
+      "map_coverage": 0.73062,
+      "object_hypotheses": 3,
+      "object_inspections": 1,
+      "physical_touches": 1,
+      "interactions": [
+        {
+          "note": "long_probe_complete",
+          "target_surface_at_start": [
+            0.5973487185280006,
+            0.3231052498360576
+          ],
+          "total_sensed_movement_m": 0.06809,
+          "short_probe_movement_m": 0.041036569171613,
+          "predicted_probability": 0.506593333821985,
+          "label_meaningful_movement": 1,
+          "physics_time_s": 8.66,
+          "robot_xy_at_end": [
+            0.5176,
+            0.2846
+          ],
+          "robot_to_target_distance_m": 0.1069
+        }
+      ],
+      "previous_training_samples": 32,
+      "new_labeled_samples": 1,
+      "online_network_updates": 1,
+      "limitations": "Idealized range, simulator truth pose, approximate AABB rays, V5 reference only; not hardware-safe or semantic object recognition"
+    },
+    {
+      "seed": 23,
+      "termination": "time_limit",
+      "elapsed_s": 90.0,
+      "sensor_surveys": 300,
+      "map_coverage": 0.78312,
+      "object_hypotheses": 3,
+      "object_inspections": 2,
+      "physical_touches": 2,
+      "interactions": [
+        {
+          "note": "model_chose_observe",
+          "target_surface_at_start": [
+            0.579217,
+            -0.3362271441753866
+          ],
+          "total_sensed_movement_m": 0.009,
+          "short_probe_movement_m": 0.008998255700462724,
+          "predicted_probability": 0.4951741533881858,
+          "label_meaningful_movement": 0,
+          "physics_time_s": 9.38,
+          "robot_xy_at_end": [
+            0.4744,
+            -0.1839
+          ],
+          "robot_to_target_distance_m": 0.2118
+        },
+        {
+          "note": "long_probe_complete",
+          "target_surface_at_start": [
+            0.570140238258708,
+            0.32304390772077424
+          ],
+          "total_sensed_movement_m": 0.04325,
+          "short_probe_movement_m": 0.017484871832021208,
+          "predicted_probability": 0.504834673083581,
+          "label_meaningful_movement": 0,
+          "physics_time_s": 23.08,
+          "robot_xy_at_end": [
+            0.4568,
+            0.3196
+          ],
+          "robot_to_target_distance_m": 0.1269
+        }
+      ],
+      "previous_training_samples": 32,
+      "new_labeled_samples": 1,
+      "online_network_updates": 1,
+      "limitations": "Idealized range, simulator truth pose, approximate AABB rays, V5 reference only; not hardware-safe or semantic object recognition"
+    }
+  ],
+  "protocol": {
+    "trials": 48,
+    "train_seeds": "1000..1031",
+    "test_seeds": "2000..2015",
+    "hidden_randomization": "size, mass, friction, free vs fixed independent of apparent width",
+    "sensors": "idealized planar range and simulated robot-object touch",
+    "locomotion": "V5 reference only; PPO not exercised",
+    "meaningful_displacement_m": 0.05,
+    "training": "offline MLP on 32 observed probe examples; online replay fine-tuning after each confirmed long push in continuous world"
+  },
+  "limitations": [
+    "Small held-out set (16): Brier difference not a demonstrated robust generalization advantage",
+    "The model uses a short physical probe result; mass and friction are never supplied to its features",
+    "Held-out shadow evaluation ALWAYS executes the second push to obtain labels even when model suggests observing",
+    "Continuous scenes place three static or freejoint objects and use simulator-truth pose, sparse idealized rays, reference V5 gait, and controlled bounded pushes",
+    "Only one or two physical experiments per integrated scene were completed in the three tested rooms",
+    "Online updating means replay fine-tuning of outcome predictor, not learning a motor-control policy",
+    "Never execute these pushes on a real robot or in an uncontrolled environment without force sensing, reliable localization and a safety stop"
+  ]
+}

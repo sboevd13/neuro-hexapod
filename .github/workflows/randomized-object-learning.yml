@@ -10,6 +10,7 @@ on:
       - autonomous_world.py
       - tests/test_affordance_model.py
       - tests/test_world_scene.py
+      - tests/test_integrated_replay.py
       - .github/workflows/randomized-object-learning.yml
 jobs:
   physics-and-learning:
@@ -25,6 +26,8 @@ jobs:
         run: python -m unittest discover -s tests -p test_affordance_model.py -v
       - name: Test multi-object procedural environments
         run: python -m unittest discover -s tests -p test_world_scene.py -v
+      - name: Check continuous-session replay input hygiene
+        run: python -m unittest discover -s tests -p test_integrated_replay.py -v
       - name: Randomized physical encounters with independent test scenes
         run: python affordance_rollouts.py --output runs/embodied
       - name: Validate physics dataset and report (do not assume improvement)
