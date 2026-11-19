@@ -1,0 +1,39 @@
+name: Autonomous exploration checks
+
+on:
+  push:
+    branches:
+      - feature/autonomous-exploration
+  pull_request:
+    paths:
+      - autonomy/**
+      - explore_laptop.py
+      - tests/test_autonomy.py
+      - docs/autonomy.md
+      - .github/workflows/autonomy.yml
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install simulation dependencies
+        run: python -m pip install "numpy>=1.26,<3" "mujoco==3.2.7"
+      - name: Run exploration unit tests
+        run: python -m unittest discover -s tests -p test_autonomy.py -v
+      - name: Run headless MuJoCo smoke test
+        run: python explore_laptop.py --reference --seconds 45 --seed 7 --output runs/ci
+      - name: Validate saved run
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          metrics = json.loads(Path("runs/ci/metrics.json").read_text())
+          assert metrics["termination"] != "fall", metrics
+          assert metrics["sensor_surveys"] > 0, metrics
+          assert metrics["mapped_cells"] > 0, metrics
+          assert Path("runs/ci/occupancy.json").exists()
+          PY

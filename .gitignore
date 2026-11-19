@@ -1,6 +1,7 @@
 # Python virtual environments
 venv/
 .venv/
+.venv-laptop/
 
 # Python cache
 __pycache__/
@@ -28,6 +29,7 @@ __pycache__/
 wandb/
 runs/
 outputs/
+checkpoints/
 
 # OS
 .DS_Store

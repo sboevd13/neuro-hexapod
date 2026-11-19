@@ -1,0 +1,8 @@
+# Validated CPU versions. On Linux/WSL add "jax[cuda12]==0.4.35" for GPU PPO.
+jax==0.4.35
+mujoco==3.2.7
+flax==0.10.2
+optax==0.2.4
+chex==0.1.88
+orbax-checkpoint==0.11.5
+numpy>=1.26,<3
