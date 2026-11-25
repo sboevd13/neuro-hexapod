@@ -1,0 +1,61 @@
+{
+  "train_samples": 12712,
+  "held_out_samples": 3281,
+  "held_out_seeds": [
+    822,
+    823,
+    824,
+    825
+  ],
+  "moving_held_out_seeds": [
+    939,
+    940,
+    941
+  ],
+  "classes": [
+    "clear",
+    "roof",
+    "corridor",
+    "terrain",
+    "barrier"
+  ],
+  "confusion_matrix": [
+    [
+      1664,
+      3,
+      4,
+      2,
+      8
+    ],
+    [
+      16,
+      370,
+      0,
+      0,
+      3
+    ],
+    [
+      6,
+      0,
+      573,
+      1,
+      0
+    ],
+    [
+      11,
+      0,
+      1,
+      412,
+      2
+    ],
+    [
+      22,
+      10,
+      9,
+      1,
+      163
+    ]
+  ],
+  "accuracy": 0.9698262724779031,
+  "epochs": 107
+}
