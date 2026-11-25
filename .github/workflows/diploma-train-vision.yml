@@ -14,13 +14,15 @@ jobs:
       OPENBLAS_NUM_THREADS: 1
       OMP_NUM_THREADS: 1
       LP_NUM_THREADS: 2
-      MUJOCO_GL: egl
+      MUJOCO_GL: osmesa
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
+      - name: Install headless OpenGL and X11 for the desktop test
+        run: sudo apt-get update -qq && sudo apt-get install -y libosmesa6 libgl1-mesa-dri xvfb xauth
       - run: python -m pip install -r requirements-diploma.txt 'scikit-learn==1.8.0'
       - name: Load the calibrated gait for walking-camera samples
         run: |

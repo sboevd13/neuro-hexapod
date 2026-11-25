@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      MUJOCO_GL: egl
+      MUJOCO_GL: osmesa
       OPENBLAS_NUM_THREADS: 1
       LP_NUM_THREADS: 2
       PYGAME_HIDE_SUPPORT_PROMPT: 1
@@ -23,6 +23,8 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+      - name: Install headless OpenGL and X11 for the desktop test
+        run: sudo apt-get update -qq && sudo apt-get install -y libosmesa6 libgl1-mesa-dri xvfb xauth
       - run: python -m pip install -r requirements-diploma-training.txt
       - run: xvfb-run -a python -m unittest discover -s tests -v
       - name: Exercise public entry points
