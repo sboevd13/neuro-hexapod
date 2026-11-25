@@ -94,6 +94,36 @@ class Contracts(unittest.TestCase):
                 reference.append(np.floor(np.clip([coxa,fem,tib],0,180)+.5))
             np.testing.assert_array_equal(firmware_degrees(solve(feet/1000)),reference)
 
+class HardwareAdapters(unittest.TestCase):
+    def test_recorded_hardware_stream_uses_the_same_controller(self):
+        from hexapod.hardware import ImuReading,CameraReading,LiveSensors,CalibratedActuators
+        class Camera:
+            calls=0
+            def read(self,image,attitude,time):
+                self.calls+=1
+                return Scan(time)
+        t=[500.]
+        imu=[ImuReading(t[0],(0.,0.,0.),(0.,0.,0.))]
+        frame=[CameraReading(t[0],np.zeros((2,2)))]
+        cam=Camera()
+        live=LiveSensors(lambda:imu[0],lambda:frame[0],cam,lambda:t[0])
+        wire=[]
+        sink=CalibratedActuators(wire.append)
+        source=Replay([{'at':0,'forward':1}])
+        ctrl=Controller()
+        output=tick(source,live,ctrl,sink)
+        self.assertEqual(wire[-1],firmware_degrees(output.angles).tobytes())
+        self.assertEqual(len(wire[-1]),18)
+        t[0]+=.02
+        self.assertEqual(live.observe().scan.time,0.)
+        self.assertEqual(cam.calls,1)
+        t[0]+=.5
+        self.assertEqual(tick(source,live,ctrl,sink).mode,'sensor_stop')
+        imu[0]=ImuReading(t[0],(0.,0.,0.),(0.,0.,0.))
+        self.assertEqual(tick(source,live,ctrl,sink).mode,'sensor_stop')
+        frame[0]=CameraReading(t[0],np.ones((2,2)))
+        self.assertEqual(tick(source,live,ctrl,sink).mode,'normal')
+
 class Physics(unittest.TestCase):
     def test_home_pivots_tip_positions_and_physical_limits(self):
         sim=Simulation('flat',401)

@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -22,7 +23,9 @@ def main():
         for i,(name,title) in enumerate(zip(COURSES,TITLES),1):
             print(f'{i}  {name:10s} {title}')
         return
-    if args.seconds is not None and (not args.headless or args.seconds<=0):
+    if args.input=='gamepad' and (args.headless or args.replay):
+        p.error('Headless and replay modes use recorded commands; choose --input keyboard or omit --input')
+    if args.seconds is not None and (not args.headless or not math.isfinite(args.seconds) or args.seconds<=0):
         p.error('--seconds requires headless mode and a positive duration')
     if sys.platform.startswith('linux') and not os.environ.get('DISPLAY'):
         os.environ.setdefault('MUJOCO_GL','egl')
