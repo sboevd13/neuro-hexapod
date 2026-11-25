@@ -14,28 +14,13 @@ import mujoco
 import numpy as np
 
 import reference_gait as v5
+from hexapod.gait import clean_command, directional_reference, rpy, wrap_angle, STAND
 
 VERSION = "directional_v5_residual_ppo_v3"
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "arena.xml"
 OBS_SIZE = 65
 ACTION_SIZE = 18
 CONTROL_DT = 0.020
-HIP_XY_CM = np.array([[11.04, 5.84], [0, 9.08], [-11.04, 5.84],
-                      [11.04, -5.84], [0, -9.08], [-11.04, -5.84]])
-LEG_YAW = np.deg2rad(v5.LEG_YAW_DEG)
-COS_YAW, SIN_YAW = np.cos(LEG_YAW), np.sin(LEG_YAW)
-FOOT_XY_CM = HIP_XY_CM + v5.HOME_X_CM * np.stack([COS_YAW, SIN_YAW], axis=-1)
-TANGENTS = np.stack([-FOOT_XY_CM[:, 1], FOOT_XY_CM[:, 0]], axis=-1) / 24.0
-STAND_Z = np.array([v5.RAISED_Z[i] for i in range(6)])
-STAND = v5.raised_stand_targets().astype(np.float64)
-TABLE_SIZE = 1024
-# Preserve the accepted leg-specific timing, load/push/coil/whip/catch shape.
-TRAJECTORIES = np.array([
-    [v5.leg_trajectory(leg, (p + v5.PHASE_OFFSET[leg]) % 1.0)
-     for leg in range(6)] for p in np.arange(TABLE_SIZE) / TABLE_SIZE
-])
-
-
 @dataclass(frozen=True)
 class Config:
     residual_deg: tuple = (3.0, 4.0, 4.0)
@@ -50,70 +35,6 @@ class Config:
 
     def to_dict(self):
         return asdict(self)
-
-
-def wrap_angle(angle):
-    return np.arctan2(np.sin(angle), np.cos(angle))
-
-
-def rpy(quat):
-    w, x, y, z = quat
-    return np.array([
-        np.arctan2(2 * (w*x + y*z), 1 - 2 * (x*x + y*y)),
-        np.arcsin(np.clip(2 * (w*y - z*x), -1.0, 1.0)),
-        np.arctan2(2 * (w*z + x*y), 1 - 2 * (y*y + z*z)),
-    ])
-
-
-def clean_command(command):
-    c = np.asarray(command, dtype=np.float64).copy()
-    if c.shape != (3,) or not np.all(np.isfinite(c)):
-        raise ValueError("Command must be three finite numbers: vx vy yaw")
-    c = np.clip(c, -1.0, 1.0)
-    c[:2] /= max(1.0, float(np.linalg.norm(c[:2])))
-    return c
-
-
-def directional_reference(phase, command):
-    """Rotate V5 foot strokes in BODY XY; yaw adds tangential foot strokes.
-
-    Back/side/diagonal commands keep the same asymmetric six-leg choreography
-    instead of losing their reference and becoming unrestricted joint control.
-    """
-    if np.linalg.norm(command) < 1e-8:
-        return STAND.copy()
-    index = (float(phase) % 1.0) * TABLE_SIZE
-    i = int(index)
-    f, z, radial = ((1 - (index-i)) * TRAJECTORIES[i] +
-                    (index-i) * TRAJECTORIES[(i+1) % TABLE_SIZE]).T
-    translation = np.asarray(command[:2], dtype=np.float64).copy()
-    # V5 is deliberately asymmetric. Its uncalibrated left strokes undertravel
-    # relative to forward strokes. A continuous feed-forward calibration keeps
-    # the requested body direction (it uses no measured body velocity).
-    direction_x = translation[0] / max(float(np.linalg.norm(translation)), 1e-8)
-    if translation[1] > 0:
-        lateral = translation[1]
-        translation[0] -= lateral*(0.08 + 0.20*(1-abs(direction_x)))
-        translation[1] *= 1.50 + 0.35*direction_x
-    velocity = translation[None, :] + command[2] * TANGENTS
-    amplitude = np.minimum(1.0, np.linalg.norm(velocity, axis=1))
-    shift = f[:, None] * velocity
-    x = v5.HOME_X_CM + radial * amplitude + shift[:, 0]*COS_YAW + shift[:, 1]*SIN_YAW
-    y = -shift[:, 0]*SIN_YAW + shift[:, 1]*COS_YAW
-    z = STAND_Z + amplitude * (z - STAND_Z)
-
-    gamma = np.arctan2(y, x)
-    horizontal = np.hypot(x - v5.L0*np.cos(gamma), y - v5.L0*np.sin(gamma))
-    distance = np.hypot(horizontal, z)
-    clipped = np.clip(distance, abs(v5.L2-v5.L1)+v5.IK_MARGIN_CM,
-                      v5.L1+v5.L2-v5.IK_MARGIN_CM)
-    ratio = clipped / np.maximum(distance, 1e-9)
-    horizontal, z, distance = horizontal*ratio, z*ratio, clipped
-    alpha = np.arccos(np.clip((v5.L1**2 + distance**2 - v5.L2**2) /
-                             (2*v5.L1*distance), -1, 1)) + np.arctan2(z, horizontal)
-    beta = np.arccos(np.clip((v5.L1**2 + v5.L2**2 - distance**2) /
-                            (2*v5.L1*v5.L2), -1, 1))
-    return np.stack([gamma*np.asarray(v5.Q1_SIGN), alpha, beta-np.pi], axis=-1).reshape(18)
 
 
 def load_model(xml=None):
@@ -149,6 +70,9 @@ class LocomotionEnv:
         self.config = config or Config()
         self.model = model if model is not None else load_model()
         self.data = mujoco.MjData(self.model)
+        self.links_cm = tuple(float(self.model.numeric(name + "_length_mm").data[0]) / 10
+                              for name in ("coxa", "femur", "tibia"))
+        self.stand = directional_reference(0., np.zeros(3), self.links_cm)
         self.low = self.model.actuator_ctrlrange[:, 0]
         self.high = self.model.actuator_ctrlrange[:, 1]
         self.scale = np.tile(np.deg2rad(self.config.residual_deg), 6)
@@ -160,8 +84,8 @@ class LocomotionEnv:
         mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:3] = [0, 0, 0.110]
         self.data.qpos[3:7] = [math.cos(yaw/2), 0, 0, math.sin(yaw/2)]
-        self.data.qpos[7:] = STAND + rng.uniform(-0.002, 0.002, 18)
-        self.commanded_q = np.clip(STAND.copy(), self.low, self.high)
+        self.data.qpos[7:] = self.stand + rng.uniform(-0.002, 0.002, 18)
+        self.commanded_q = np.clip(self.stand.copy(), self.low, self.high)
         self.data.ctrl[:] = self.commanded_q
         mujoco.mj_forward(self.model, self.data)
         # Let gravity load the legs before the first step; identical in viewer.
@@ -189,7 +113,7 @@ class LocomotionEnv:
             heading_error = wrap_angle(orientation[2] - self.heading)
             c[2] = np.clip(c[2] - self.config.heading_kp*heading_error
                            - self.config.heading_kd*self.data.qvel[5], -1, 1)
-        return np.clip(directional_reference(self.phase, c), self.low, self.high)
+        return np.clip(directional_reference(self.phase, c, self.links_cm), self.low, self.high)
 
     def observation(self):
         orientation = rpy(self.data.qpos[3:7])
@@ -215,7 +139,7 @@ class LocomotionEnv:
         self.residual += self.config.residual_filter*(np.clip(action, -1, 1)-self.residual)
         q_ref = self.reference()
         ramp = v5.smoother(self.steps*CONTROL_DT/self.config.ramp_seconds)
-        target = STAND + ramp*(q_ref + self.scale*self.residual - STAND)
+        target = self.stand + ramp*(q_ref + self.scale*self.residual - self.stand)
         target = np.clip(target, self.low, self.high)
         limit = np.deg2rad(self.config.servo_deg_s)*CONTROL_DT
         self.commanded_q += np.clip(target-self.commanded_q, -limit, limit)
