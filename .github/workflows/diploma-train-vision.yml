@@ -1,0 +1,51 @@
+name: Train onboard RGB perception
+on:
+  push:
+    branches: [diploma/adaptive-locomotion]
+    paths: ['hexapod/train_vision.py', '.github/workflows/diploma-train-vision.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      OPENBLAS_NUM_THREADS: 1
+      OMP_NUM_THREADS: 1
+      LP_NUM_THREADS: 2
+      MUJOCO_GL: egl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements-diploma.txt 'scikit-learn==1.8.0'
+      - name: Load the calibrated gait for walking-camera samples
+        run: |
+          mkdir -p hexapod/weights
+          for i in $(seq 1 45); do
+            git fetch -q origin diploma/adaptive-locomotion
+            if git show FETCH_HEAD:hexapod/weights/gait_ppo.npz >hexapod/weights/gait_ppo.npz 2>/dev/null; then break; fi
+            sleep 15
+          done
+          test -s hexapod/weights/gait_ppo.npz
+      - run: python -m hexapod.train_vision --report validation/diploma/camera_training.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: calibrated-camera
+          path: |
+            hexapod/weights/camera_rgb.npz
+            validation/diploma/camera_training.json
+      - name: Publish the RGB model
+        if: github.ref == 'refs/heads/diploma/adaptive-locomotion'
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add hexapod/weights/camera_rgb.npz validation/diploma/camera_training.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Ship trained camera model and held-out image metrics"
+          git restore --source=HEAD --staged --worktree hexapod/weights/gait_ppo.npz 2>/dev/null || rm -f hexapod/weights/gait_ppo.npz
+          git pull --rebase origin diploma/adaptive-locomotion
+          git push origin HEAD:diploma/adaptive-locomotion
