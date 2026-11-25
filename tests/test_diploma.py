@@ -124,6 +124,25 @@ class HardwareAdapters(unittest.TestCase):
         frame[0]=CameraReading(t[0],np.ones((2,2)))
         self.assertEqual(tick(source,live,ctrl,sink).mode,'normal')
 
+class MonocularGeometry(unittest.TestCase):
+    def test_corridor_fraction_from_projected_floor_edges(self):
+        from hexapod.vision import CorridorEdges, RGB_WIDTH, RGB_HEIGHT
+        from hexapod.perception import level_rotation
+        estimator = CorridorEdges()
+        for attitude in [(0., 0., 0.), (.06, -.04, .02)]:
+            rays = estimator.rays @ level_rotation(*attitude[:2]).T
+            surface_y = .13*rays[:, :, 1]/np.maximum(.01, -rays[:, :, 2])
+            for left, right in [(.20, .25), (.25, .20), (.22, .22)]:
+                with self.subTest(left=left, right=right, attitude=attitude):
+                    image = np.full((RGB_HEIGHT, RGB_WIDTH, 3), [85, 100, 100], dtype=np.uint8)
+                    image[(surface_y>left) | (surface_y < -right)] = [150, 92, 46]
+                    fraction = estimator.left_fraction(image, attitude)
+                    self.assertIsNotNone(fraction)
+                    self.assertAlmostEqual(fraction, left/(left+right), delta=.022)
+        image[:] = [100, 100, 100]
+        self.assertIsNone(estimator.left_fraction(image, (0., 0., 0.)))
+
+
 class Physics(unittest.TestCase):
     def test_home_pivots_tip_positions_and_physical_limits(self):
         sim=Simulation('flat',401)

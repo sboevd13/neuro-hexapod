@@ -77,6 +77,9 @@ class Controller:
             if left or right:
                 offset=(left-self.half_width) if left else (self.half_width-right)
                 self.center_trim+=min(1.,5*dt)*(np.clip(9.*offset,-.24,.24)-self.center_trim)
+            else:
+                # Once both walls leave the lens, return to the requested heading.
+                self.center_trim*=np.exp(-2.*dt)
             desired[1]+=self.center_trim
         else:
             self.center_trim=0.
