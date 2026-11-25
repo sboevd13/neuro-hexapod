@@ -1,0 +1,19 @@
+{
+  "training_steps": 98304,
+  "selected_steps": 49152,
+  "selected_updates": 48,
+  "model_sha256": "9c743a2c803b48968adb2b4e7889edb211f3aaef6d6d1575a4816e29d8d58e3a",
+  "checkpoint_sha256": "f97eeeaa4a096e105f17e86767fd9cc1b5b0e8f935b4a5452b7f6c8992490ba8",
+  "training_config": {
+    "num_envs": 8,
+    "workers": 2,
+    "rollout": 128,
+    "epochs": 4,
+    "batch_size": 256,
+    "eval_every": 16,
+    "eval_seconds": 12.0,
+    "seed": 42
+  },
+  "mujoco": "3.2.7",
+  "jax": "0.4.35"
+}
