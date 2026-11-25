@@ -1,0 +1,466 @@
+[
+  {
+    "course": "flat",
+    "seed": 1307,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 6.66,
+    "x_m": 1.1039,
+    "max_lateral_m": 0.0553,
+    "max_tilt_deg": 8.47,
+    "min_body_m": 0.0915,
+    "max_body_m": 0.1091,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 333
+    }
+  },
+  {
+    "course": "low",
+    "seed": 1307,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.6,
+    "x_m": 1.382,
+    "max_lateral_m": 0.0221,
+    "max_tilt_deg": 5.81,
+    "min_body_m": 0.0577,
+    "max_body_m": 0.1086,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "low": 395
+    }
+  },
+  {
+    "course": "narrow",
+    "seed": 1307,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 18.2,
+    "x_m": 1.3802,
+    "max_lateral_m": 0.0419,
+    "max_tilt_deg": 6.57,
+    "min_body_m": 0.0774,
+    "max_body_m": 0.1155,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 75,
+      "narrow": 835
+    }
+  },
+  {
+    "course": "rough",
+    "seed": 1307,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.64,
+    "x_m": 1.4033,
+    "max_lateral_m": 0.065,
+    "max_tilt_deg": 6.13,
+    "min_body_m": 0.084,
+    "max_body_m": 0.1195,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 45,
+      "rough": 387
+    }
+  },
+  {
+    "course": "blocked",
+    "seed": 1307,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "blocked",
+    "seconds": 1.7,
+    "x_m": 0.0672,
+    "max_lateral_m": 0.024,
+    "max_tilt_deg": 5.81,
+    "min_body_m": 0.0975,
+    "max_body_m": 0.1086,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "blocked": 50
+    }
+  },
+  {
+    "course": "mixed",
+    "seed": 1307,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": false,
+    "outcome": "finish",
+    "seconds": 28.1,
+    "x_m": 3.4013,
+    "max_lateral_m": 0.0978,
+    "max_tilt_deg": 5.81,
+    "min_body_m": 0.0577,
+    "max_body_m": 0.1186,
+    "obstacle_contacts": [
+      "wall_1"
+    ],
+    "modes": {
+      "normal": 35,
+      "low": 387,
+      "narrow": 638,
+      "rough": 345
+    }
+  },
+  {
+    "course": "flat",
+    "seed": 2141,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 6.18,
+    "x_m": 1.1006,
+    "max_lateral_m": 0.1566,
+    "max_tilt_deg": 7.85,
+    "min_body_m": 0.0909,
+    "max_body_m": 0.1105,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 309
+    }
+  },
+  {
+    "course": "low",
+    "seed": 2141,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.66,
+    "x_m": 1.3805,
+    "max_lateral_m": 0.0181,
+    "max_tilt_deg": 5.4,
+    "min_body_m": 0.058,
+    "max_body_m": 0.107,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "low": 398
+    }
+  },
+  {
+    "course": "narrow",
+    "seed": 2141,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 18.16,
+    "x_m": 1.3804,
+    "max_lateral_m": 0.041,
+    "max_tilt_deg": 6.47,
+    "min_body_m": 0.0774,
+    "max_body_m": 0.1133,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 73,
+      "narrow": 835
+    }
+  },
+  {
+    "course": "rough",
+    "seed": 2141,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.52,
+    "x_m": 1.4006,
+    "max_lateral_m": 0.0511,
+    "max_tilt_deg": 6.63,
+    "min_body_m": 0.0841,
+    "max_body_m": 0.123,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 45,
+      "rough": 381
+    }
+  },
+  {
+    "course": "blocked",
+    "seed": 2141,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "blocked",
+    "seconds": 1.7,
+    "x_m": 0.0641,
+    "max_lateral_m": 0.0108,
+    "max_tilt_deg": 5.4,
+    "min_body_m": 0.0975,
+    "max_body_m": 0.107,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "blocked": 50
+    }
+  },
+  {
+    "course": "mixed",
+    "seed": 2141,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 28.26,
+    "x_m": 3.401,
+    "max_lateral_m": 0.0314,
+    "max_tilt_deg": 5.67,
+    "min_body_m": 0.0578,
+    "max_body_m": 0.1163,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "low": 392,
+      "narrow": 648,
+      "rough": 338
+    }
+  },
+  {
+    "course": "flat",
+    "seed": 4523,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 6.16,
+    "x_m": 1.1047,
+    "max_lateral_m": 0.1109,
+    "max_tilt_deg": 8.72,
+    "min_body_m": 0.09,
+    "max_body_m": 0.1107,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 308
+    }
+  },
+  {
+    "course": "low",
+    "seed": 4523,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.62,
+    "x_m": 1.3805,
+    "max_lateral_m": 0.0258,
+    "max_tilt_deg": 5.36,
+    "min_body_m": 0.0572,
+    "max_body_m": 0.1065,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "low": 396
+    }
+  },
+  {
+    "course": "narrow",
+    "seed": 4523,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 18.16,
+    "x_m": 1.3856,
+    "max_lateral_m": 0.031,
+    "max_tilt_deg": 7.27,
+    "min_body_m": 0.0774,
+    "max_body_m": 0.1121,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 73,
+      "narrow": 835
+    }
+  },
+  {
+    "course": "rough",
+    "seed": 4523,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.88,
+    "x_m": 1.4023,
+    "max_lateral_m": 0.0614,
+    "max_tilt_deg": 6.19,
+    "min_body_m": 0.0739,
+    "max_body_m": 0.1179,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 55,
+      "rough": 389
+    }
+  },
+  {
+    "course": "blocked",
+    "seed": 4523,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "blocked",
+    "seconds": 1.7,
+    "x_m": 0.066,
+    "max_lateral_m": 0.0175,
+    "max_tilt_deg": 5.36,
+    "min_body_m": 0.0975,
+    "max_body_m": 0.1065,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "blocked": 50
+    }
+  },
+  {
+    "course": "mixed",
+    "seed": 4523,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": false,
+    "outcome": "finish",
+    "seconds": 28.28,
+    "x_m": 3.4033,
+    "max_lateral_m": 0.0661,
+    "max_tilt_deg": 5.36,
+    "min_body_m": 0.0572,
+    "max_body_m": 0.1153,
+    "obstacle_contacts": [
+      "wall_1"
+    ],
+    "modes": {
+      "normal": 35,
+      "low": 387,
+      "narrow": 653,
+      "rough": 339
+    }
+  },
+  {
+    "course": "flat",
+    "seed": 8369,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 6.06,
+    "x_m": 1.1048,
+    "max_lateral_m": 0.1269,
+    "max_tilt_deg": 8.56,
+    "min_body_m": 0.0909,
+    "max_body_m": 0.1105,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 303
+    }
+  },
+  {
+    "course": "low",
+    "seed": 8369,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.66,
+    "x_m": 1.3839,
+    "max_lateral_m": 0.02,
+    "max_tilt_deg": 5.48,
+    "min_body_m": 0.058,
+    "max_body_m": 0.1057,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "low": 398
+    }
+  },
+  {
+    "course": "narrow",
+    "seed": 8369,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 18.12,
+    "x_m": 1.3823,
+    "max_lateral_m": 0.0348,
+    "max_tilt_deg": 7.16,
+    "min_body_m": 0.0774,
+    "max_body_m": 0.1125,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 71,
+      "narrow": 835
+    }
+  },
+  {
+    "course": "rough",
+    "seed": 8369,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 8.7,
+    "x_m": 1.4027,
+    "max_lateral_m": 0.1069,
+    "max_tilt_deg": 7.12,
+    "min_body_m": 0.0749,
+    "max_body_m": 0.1114,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 55,
+      "rough": 380
+    }
+  },
+  {
+    "course": "blocked",
+    "seed": 8369,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "blocked",
+    "seconds": 1.7,
+    "x_m": 0.0636,
+    "max_lateral_m": 0.0131,
+    "max_tilt_deg": 5.48,
+    "min_body_m": 0.0975,
+    "max_body_m": 0.1057,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "blocked": 50
+    }
+  },
+  {
+    "course": "mixed",
+    "seed": 8369,
+    "camera": "rgb",
+    "controller": "adaptive",
+    "accepted": true,
+    "outcome": "finish",
+    "seconds": 28.24,
+    "x_m": 3.4015,
+    "max_lateral_m": 0.0507,
+    "max_tilt_deg": 5.69,
+    "min_body_m": 0.0578,
+    "max_body_m": 0.1219,
+    "obstacle_contacts": [],
+    "modes": {
+      "normal": 35,
+      "low": 392,
+      "narrow": 648,
+      "rough": 337
+    }
+  }
+]
