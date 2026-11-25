@@ -281,6 +281,19 @@ class Physics(unittest.TestCase):
                 self.assertTrue(measured["accepted"], measured)
         self.assertFalse(run("low", 41, False)["accepted"])
 
+    def test_stop_before_impassable_roof_and_corridor(self):
+        for camera in ("depth", "rgb"):
+            for name, opening in (("low", 0.105), ("narrow", 0.32)):
+                with self.subTest(camera=camera, course=name):
+                    sim = Simulation(name, 1609, camera, opening=opening)
+                    try:
+                        trial = run(name, 1609, sim=sim)
+                        self.assertEqual(trial["outcome"], "blocked", trial)
+                        self.assertLess(trial["x_m"], sim.course.entrance, trial)
+                        self.assertEqual(trial["obstacle_contacts"], [], trial)
+                    finally:
+                        sim.close()
+
     def test_stop_without_contact_and_reverse(self):
         sim = Simulation("blocked", 97)
         ctrl = Controller()
