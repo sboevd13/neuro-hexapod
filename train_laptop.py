@@ -44,6 +44,7 @@ def parse_args():
     p.add_argument('--device', choices=['auto', 'cpu', 'gpu'], default='auto')
     p.add_argument('--run-dir', type=Path)
     p.add_argument('--resume', type=Path)
+    p.add_argument('--model-xml', type=Path, help='Calibrated model for a fresh run')
     args = p.parse_args()
     if min(args.steps, args.num_envs, args.workers, args.rollout, args.epochs,
            args.batch_size, args.eval_every) <= 0 or args.eval_seconds < 4:
@@ -118,7 +119,7 @@ def main():
     rng = np.random.default_rng(args.seed)
     optimizer = make_optimizer()
     updates, env_steps, best_score = 0, 0, None
-    config, xml = Config(), MODEL_PATH.read_text()
+    config, xml = Config(), (args.model_xml or MODEL_PATH).read_text()
     if args.resume:
         params, opt_state, previous, xml = load_checkpoint(args.resume)
         config = Config(**previous['config'])

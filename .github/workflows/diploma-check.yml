@@ -1,0 +1,80 @@
+name: Verify adaptive hexapod
+on:
+  push:
+    branches: [diploma/adaptive-locomotion]
+    paths: ['hexapod/**','tests/test_diploma.py','.github/workflows/diploma-check.yml','requirements-diploma*.txt']
+  pull_request:
+    paths: ['hexapod/**','tests/test_diploma.py','.github/workflows/diploma-check.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MUJOCO_GL: osmesa
+      OPENBLAS_NUM_THREADS: 1
+      LP_NUM_THREADS: 2
+      PYGAME_HIDE_SUPPORT_PROMPT: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install headless OpenGL and X11 for the desktop test
+        run: sudo apt-get update -qq && sudo apt-get install -y libosmesa6 libgl1-mesa-dri xvfb xauth
+      - run: python -m pip install -r requirements-diploma-training.txt
+      - run: xvfb-run -a python -m unittest discover -s tests -v
+      - name: Exercise public entry points
+        run: |
+          python -m hexapod --list-tracks
+          python -m hexapod --track blocked --headless
+          python -m hexapod.benchmark --seeds 41 --both
+  monocular-regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MUJOCO_GL: osmesa
+      LP_NUM_THREADS: 2
+      OPENBLAS_NUM_THREADS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12', cache: pip}
+      - run: sudo apt-get update -qq && sudo apt-get install -y libosmesa6 libgl1-mesa-dri
+      - run: python -m pip install -r requirements-diploma.txt
+      - name: Drive from a low roof into a narrow passage using onboard RGB
+        run: python -m hexapod.benchmark --camera rgb --courses mixed --seeds 1307 4523 --trace-dir traces
+      - if: always()
+        name: Summarize clearance and first contacts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          for path in sorted(Path('traces').glob('*.json')):
+              print(path.name)
+              for row in json.loads(path.read_text()):
+                  if row['contacts'] or (1.22 < row['xy'][0] < 2.35 and int(round(10*row['t'])) % 5 == 0):
+                      print(json.dumps(row))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: {name: rgb-contact-traces, path: traces/}
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+      OPENBLAS_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12', cache: pip}
+      - run: python -m pip install -r requirements-diploma.txt
+      - name: Complete a mixed course from the public entry point
+        shell: pwsh
+        run: |
+          $trial = python -m hexapod --headless --track mixed --seed 41 | Out-String | ConvertFrom-Json
+          if (-not $trial.accepted) { throw "Course failed: $($trial | ConvertTo-Json)" }

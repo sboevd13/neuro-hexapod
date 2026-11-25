@@ -1,0 +1,3 @@
+-r requirements-diploma.txt
+-r requirements-laptop.txt
+scikit-learn==1.8.0
