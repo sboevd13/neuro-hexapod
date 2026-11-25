@@ -11,7 +11,7 @@ from .ports import DT,tick
 from .simulation import Simulation
 from .world import COURSES
 
-def run(name,seed,adaptive=True,seconds=None,source=None,sim=None,camera='depth'):
+def run(name,seed,adaptive=True,seconds=None,source=None,sim=None,camera='depth',trace=None):
     owned=sim is None
     sim=sim or Simulation(name,seed,camera)
     ctrl=Controller(adaptive)
@@ -21,13 +21,19 @@ def run(name,seed,adaptive=True,seconds=None,source=None,sim=None,camera='depth'
     max_tilt=drift=0.
     min_z,max_z=10.,0.
     obstacle_ids={sim.model.geom(n).id:n for n in sim.course.obstacles}
+    new_contacts=[]
     def capture_contacts(data):
         for contact in data.contact:
             a,b=contact.geom1,contact.geom2
             if a in obstacle_ids and sim.model.geom_group[b]==1:
-                touched.add(obstacle_ids[a])
-            if b in obstacle_ids and sim.model.geom_group[a]==1:
-                touched.add(obstacle_ids[b])
+                obstacle,link=obstacle_ids[a],b
+            elif b in obstacle_ids and sim.model.geom_group[a]==1:
+                obstacle,link=obstacle_ids[b],a
+            else:
+                continue
+            if trace is not None and obstacle not in touched:
+                new_contacts.append([obstacle,sim.model.geom(link).name])
+            touched.add(obstacle)
     sim.after_substep=capture_contacts
     status='timeout'
     halted=0
@@ -41,6 +47,14 @@ def run(name,seed,adaptive=True,seconds=None,source=None,sim=None,camera='depth'
             drift=max(drift,abs(float(xy[1])))
             tilt=float(np.rad2deg(np.max(np.abs(rpy(sim.data.qpos[3:7])[:2]))))
             max_tilt=max(max_tilt,tilt)
+            if trace is not None and (sim.steps%5==0 or new_contacts):
+                scan=sim.scan
+                trace.append(dict(t=round(sim.time,3),xy=xy.round(4).tolist(),
+                                  yaw_deg=round(float(np.rad2deg(rpy(sim.data.qpos[3:7])[2])),2),
+                                  mode=target.mode,compact=round(ctrl.compact,3),
+                                  left=scan.left_m,right=scan.right_m,roof=scan.roof_m,
+                                  lateral_command=round(float(ctrl.command[1]),3),contacts=new_contacts.copy()))
+                new_contacts.clear()
             if not np.isfinite(sim.data.qpos).all() or tilt>45. or z<.028:
                 status='fall'
                 break
@@ -73,12 +87,18 @@ def main():
     parser.add_argument('--both',action='store_true')
     parser.add_argument('--camera',choices=('depth','rgb'),default='depth')
     parser.add_argument('--output',type=Path)
+    parser.add_argument('--trace-dir',type=Path,help='Save observed clearances, actual pose and first contacts for replay analysis.')
     args=parser.parse_args()
     rows=[]
     for seed in args.seeds:
         for name in args.courses:
             for adaptive in ((True,False) if args.both else (True,)):
-                row=run(name,seed,adaptive,camera=args.camera)
+                trace=[] if args.trace_dir is not None else None
+                row=run(name,seed,adaptive,camera=args.camera,trace=trace)
+                if trace is not None:
+                    args.trace_dir.mkdir(parents=True,exist_ok=True)
+                    path=args.trace_dir/f'{name}-{seed}-{args.camera}-{row["controller"]}.json'
+                    path.write_text(json.dumps(trace,indent=2,allow_nan=False)+'\n')
                 print(json.dumps(row),flush=True)
                 rows.append(row)
     if args.output:
