@@ -61,18 +61,18 @@
     "controller": "baseline",
     "accepted": false,
     "outcome": "finish",
-    "seconds": 25.54,
-    "x_m": 1.3838,
+    "seconds": 22.16,
+    "x_m": 1.3808,
     "max_lateral_m": 0.241,
-    "max_tilt_deg": 13.77,
-    "min_body_m": 0.0609,
-    "max_body_m": 0.1103,
+    "max_tilt_deg": 12.59,
+    "min_body_m": 0.0614,
+    "max_body_m": 0.1241,
     "obstacle_contacts": [
       "post_1",
       "roof_low"
     ],
     "modes": {
-      "normal": 1277
+      "normal": 1108
     }
   },
   {
@@ -82,15 +82,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 18.48,
-    "x_m": 1.381,
+    "seconds": 18.38,
+    "x_m": 1.3881,
     "max_lateral_m": 0.0328,
-    "max_tilt_deg": 8.61,
+    "max_tilt_deg": 6.62,
     "min_body_m": 0.0774,
     "max_body_m": 0.107,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 69,
+      "normal": 64,
       "narrow": 855
     }
   },
@@ -179,11 +179,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3655,
-    "max_lateral_m": 0.194,
-    "max_tilt_deg": 21.71,
-    "min_body_m": 0.0597,
-    "max_body_m": 0.1565,
+    "x_m": 0.3634,
+    "max_lateral_m": 0.3546,
+    "max_tilt_deg": 17.31,
+    "min_body_m": 0.0606,
+    "max_body_m": 0.1489,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -198,15 +198,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 28.48,
-    "x_m": 3.4021,
-    "max_lateral_m": 0.0517,
-    "max_tilt_deg": 6.23,
+    "seconds": 28.5,
+    "x_m": 3.4017,
+    "max_lateral_m": 0.0228,
+    "max_tilt_deg": 5.88,
     "min_body_m": 0.0575,
-    "max_body_m": 0.1197,
+    "max_body_m": 0.1203,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 35,
+      "normal": 36,
       "low": 392,
       "narrow": 653,
       "rough": 344
@@ -218,21 +218,20 @@
     "camera": "depth",
     "controller": "baseline",
     "accepted": false,
-    "outcome": "finish",
-    "seconds": 40.9,
-    "x_m": 3.4032,
-    "max_lateral_m": 0.241,
-    "max_tilt_deg": 14.98,
-    "min_body_m": 0.0609,
-    "max_body_m": 0.1439,
+    "outcome": "timeout",
+    "seconds": 65.0,
+    "x_m": 1.5145,
+    "max_lateral_m": 0.2813,
+    "max_tilt_deg": 13.64,
+    "min_body_m": 0.0614,
+    "max_body_m": 0.147,
     "obstacle_contacts": [
       "post_1",
       "roof_low",
-      "wall_-1",
       "wall_1"
     ],
     "modes": {
-      "normal": 2045
+      "normal": 3250
     }
   },
   {
@@ -298,10 +297,10 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.8969,
-    "max_lateral_m": 0.3255,
-    "max_tilt_deg": 12.38,
-    "min_body_m": 0.0606,
+    "x_m": 0.7813,
+    "max_lateral_m": 0.3281,
+    "max_tilt_deg": 14.55,
+    "min_body_m": 0.0695,
     "max_body_m": 0.114,
     "obstacle_contacts": [
       "post_1",
@@ -318,15 +317,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 18.56,
-    "x_m": 1.3821,
-    "max_lateral_m": 0.0339,
-    "max_tilt_deg": 7.38,
+    "seconds": 18.4,
+    "x_m": 1.3802,
+    "max_lateral_m": 0.044,
+    "max_tilt_deg": 7.1,
     "min_body_m": 0.0774,
-    "max_body_m": 0.106,
+    "max_body_m": 0.1063,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 78,
+      "normal": 70,
       "narrow": 850
     }
   },
@@ -415,11 +414,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3546,
-    "max_lateral_m": 0.2439,
-    "max_tilt_deg": 20.61,
-    "min_body_m": 0.0561,
-    "max_body_m": 0.1472,
+    "x_m": 0.3066,
+    "max_lateral_m": 0.187,
+    "max_tilt_deg": 19.52,
+    "min_body_m": 0.0564,
+    "max_body_m": 0.1462,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -434,18 +433,18 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 28.28,
-    "x_m": 3.4019,
-    "max_lateral_m": 0.0637,
-    "max_tilt_deg": 5.23,
+    "seconds": 28.42,
+    "x_m": 3.4025,
+    "max_lateral_m": 0.0405,
+    "max_tilt_deg": 5.39,
     "min_body_m": 0.0578,
-    "max_body_m": 0.1187,
+    "max_body_m": 0.1147,
     "obstacle_contacts": [],
     "modes": {
       "normal": 35,
       "low": 392,
       "narrow": 648,
-      "rough": 339
+      "rough": 346
     }
   },
   {
@@ -454,21 +453,19 @@
     "camera": "depth",
     "controller": "baseline",
     "accepted": false,
-    "outcome": "finish",
-    "seconds": 47.74,
-    "x_m": 3.4004,
-    "max_lateral_m": 0.3255,
-    "max_tilt_deg": 18.28,
-    "min_body_m": 0.0606,
-    "max_body_m": 0.1421,
+    "outcome": "timeout",
+    "seconds": 65.0,
+    "x_m": 0.7993,
+    "max_lateral_m": 0.3328,
+    "max_tilt_deg": 15.14,
+    "min_body_m": 0.0675,
+    "max_body_m": 0.114,
     "obstacle_contacts": [
       "post_1",
-      "roof_low",
-      "wall_-1",
-      "wall_1"
+      "roof_low"
     ],
     "modes": {
-      "normal": 2387
+      "normal": 3250
     }
   },
   {
@@ -532,19 +529,19 @@
     "camera": "depth",
     "controller": "baseline",
     "accepted": false,
-    "outcome": "finish",
-    "seconds": 26.16,
-    "x_m": 1.3834,
-    "max_lateral_m": 0.2176,
-    "max_tilt_deg": 19.42,
-    "min_body_m": 0.0614,
-    "max_body_m": 0.1439,
+    "outcome": "timeout",
+    "seconds": 30.0,
+    "x_m": 1.083,
+    "max_lateral_m": 0.3354,
+    "max_tilt_deg": 16.27,
+    "min_body_m": 0.054,
+    "max_body_m": 0.1153,
     "obstacle_contacts": [
       "post_-1",
       "roof_low"
     ],
     "modes": {
-      "normal": 1308
+      "normal": 1500
     }
   },
   {
@@ -554,15 +551,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 18.82,
-    "x_m": 1.38,
+    "seconds": 18.68,
+    "x_m": 1.3814,
     "max_lateral_m": 0.0499,
-    "max_tilt_deg": 7.9,
+    "max_tilt_deg": 7.94,
     "min_body_m": 0.077,
-    "max_body_m": 0.1071,
+    "max_body_m": 0.1067,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 91,
+      "normal": 84,
       "narrow": 850
     }
   },
@@ -613,15 +610,15 @@
     "controller": "baseline",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 9.06,
-    "x_m": 1.4032,
+    "seconds": 9.1,
+    "x_m": 1.4051,
     "max_lateral_m": 0.0579,
     "max_tilt_deg": 13.81,
     "min_body_m": 0.0832,
     "max_body_m": 0.1312,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 453
+      "normal": 455
     }
   },
   {
@@ -651,11 +648,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3605,
-    "max_lateral_m": 0.2693,
-    "max_tilt_deg": 19.72,
-    "min_body_m": 0.057,
-    "max_body_m": 0.1474,
+    "x_m": 0.3539,
+    "max_lateral_m": 0.2838,
+    "max_tilt_deg": 21.7,
+    "min_body_m": 0.0594,
+    "max_body_m": 0.1557,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -670,18 +667,18 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 28.42,
-    "x_m": 3.401,
-    "max_lateral_m": 0.0433,
-    "max_tilt_deg": 5.88,
+    "seconds": 28.34,
+    "x_m": 3.4026,
+    "max_lateral_m": 0.0485,
+    "max_tilt_deg": 5.93,
     "min_body_m": 0.0579,
-    "max_body_m": 0.1214,
+    "max_body_m": 0.1161,
     "obstacle_contacts": [],
     "modes": {
       "normal": 35,
       "low": 402,
       "narrow": 638,
-      "rough": 346
+      "rough": 342
     }
   },
   {
@@ -692,11 +689,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 65.0,
-    "x_m": 1.5195,
-    "max_lateral_m": 0.2759,
-    "max_tilt_deg": 19.42,
-    "min_body_m": 0.0614,
-    "max_body_m": 0.1439,
+    "x_m": 1.5177,
+    "max_lateral_m": 0.3354,
+    "max_tilt_deg": 16.27,
+    "min_body_m": 0.054,
+    "max_body_m": 0.1405,
     "obstacle_contacts": [
       "post_-1",
       "roof_low",
@@ -768,18 +765,18 @@
     "controller": "baseline",
     "accepted": false,
     "outcome": "finish",
-    "seconds": 14.72,
-    "x_m": 1.3839,
-    "max_lateral_m": 0.2466,
-    "max_tilt_deg": 12.42,
-    "min_body_m": 0.0598,
-    "max_body_m": 0.115,
+    "seconds": 15.78,
+    "x_m": 1.3866,
+    "max_lateral_m": 0.2833,
+    "max_tilt_deg": 17.33,
+    "min_body_m": 0.0591,
+    "max_body_m": 0.1487,
     "obstacle_contacts": [
       "post_-1",
       "roof_low"
     ],
     "modes": {
-      "normal": 736
+      "normal": 789
     }
   },
   {
@@ -790,11 +787,11 @@
     "accepted": true,
     "outcome": "finish",
     "seconds": 18.18,
-    "x_m": 1.3842,
-    "max_lateral_m": 0.037,
-    "max_tilt_deg": 6.33,
+    "x_m": 1.3843,
+    "max_lateral_m": 0.0322,
+    "max_tilt_deg": 6.96,
     "min_body_m": 0.0774,
-    "max_body_m": 0.1154,
+    "max_body_m": 0.1171,
     "obstacle_contacts": [],
     "modes": {
       "normal": 74,
@@ -886,11 +883,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3627,
-    "max_lateral_m": 0.1257,
-    "max_tilt_deg": 18.92,
+    "x_m": 0.3548,
+    "max_lateral_m": 0.1136,
+    "max_tilt_deg": 17.0,
     "min_body_m": 0.0565,
-    "max_body_m": 0.1477,
+    "max_body_m": 0.1481,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -906,9 +903,9 @@
     "accepted": true,
     "outcome": "finish",
     "seconds": 28.54,
-    "x_m": 3.4037,
-    "max_lateral_m": 0.1004,
-    "max_tilt_deg": 6.12,
+    "x_m": 3.4014,
+    "max_lateral_m": 0.0734,
+    "max_tilt_deg": 6.14,
     "min_body_m": 0.0577,
     "max_body_m": 0.1263,
     "obstacle_contacts": [],
@@ -927,11 +924,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 65.0,
-    "x_m": 1.5122,
-    "max_lateral_m": 0.3013,
-    "max_tilt_deg": 12.42,
-    "min_body_m": 0.0598,
-    "max_body_m": 0.1471,
+    "x_m": 1.5176,
+    "max_lateral_m": 0.3016,
+    "max_tilt_deg": 17.33,
+    "min_body_m": 0.0591,
+    "max_body_m": 0.1487,
     "obstacle_contacts": [
       "post_-1",
       "roof_low",
@@ -1002,19 +999,19 @@
     "camera": "depth",
     "controller": "baseline",
     "accepted": false,
-    "outcome": "timeout",
-    "seconds": 30.0,
-    "x_m": 0.798,
-    "max_lateral_m": 0.3409,
-    "max_tilt_deg": 16.5,
-    "min_body_m": 0.06,
-    "max_body_m": 0.1132,
+    "outcome": "finish",
+    "seconds": 20.62,
+    "x_m": 1.3863,
+    "max_lateral_m": 0.2026,
+    "max_tilt_deg": 15.05,
+    "min_body_m": 0.0611,
+    "max_body_m": 0.1407,
     "obstacle_contacts": [
       "post_-1",
       "roof_low"
     ],
     "modes": {
-      "normal": 1500
+      "normal": 1031
     }
   },
   {
@@ -1024,15 +1021,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 18.22,
-    "x_m": 1.3813,
-    "max_lateral_m": 0.0357,
-    "max_tilt_deg": 6.3,
+    "seconds": 18.18,
+    "x_m": 1.384,
+    "max_lateral_m": 0.0507,
+    "max_tilt_deg": 7.3,
     "min_body_m": 0.0774,
-    "max_body_m": 0.1132,
+    "max_body_m": 0.1121,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 76,
+      "normal": 74,
       "narrow": 835
     }
   },
@@ -1121,11 +1118,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3745,
-    "max_lateral_m": 0.3225,
-    "max_tilt_deg": 19.21,
-    "min_body_m": 0.0575,
-    "max_body_m": 0.1481,
+    "x_m": 0.3596,
+    "max_lateral_m": 0.2779,
+    "max_tilt_deg": 20.65,
+    "min_body_m": 0.0574,
+    "max_body_m": 0.1482,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -1140,18 +1137,18 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 27.96,
-    "x_m": 3.4012,
-    "max_lateral_m": 0.0279,
+    "seconds": 28.18,
+    "x_m": 3.402,
+    "max_lateral_m": 0.0434,
     "max_tilt_deg": 5.35,
     "min_body_m": 0.0579,
-    "max_body_m": 0.1162,
+    "max_body_m": 0.1152,
     "obstacle_contacts": [],
     "modes": {
       "normal": 35,
       "low": 387,
       "narrow": 653,
-      "rough": 323
+      "rough": 334
     }
   },
   {
@@ -1162,14 +1159,15 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 65.0,
-    "x_m": 0.7837,
-    "max_lateral_m": 0.3409,
-    "max_tilt_deg": 17.06,
-    "min_body_m": 0.06,
-    "max_body_m": 0.1132,
+    "x_m": 1.5181,
+    "max_lateral_m": 0.3069,
+    "max_tilt_deg": 15.05,
+    "min_body_m": 0.0611,
+    "max_body_m": 0.1415,
     "obstacle_contacts": [
       "post_-1",
-      "roof_low"
+      "roof_low",
+      "wall_-1"
     ],
     "modes": {
       "normal": 3250
@@ -1238,10 +1236,10 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.7828,
-    "max_lateral_m": 0.3229,
-    "max_tilt_deg": 15.03,
-    "min_body_m": 0.0694,
+    "x_m": 0.7764,
+    "max_lateral_m": 0.3272,
+    "max_tilt_deg": 15.21,
+    "min_body_m": 0.0683,
     "max_body_m": 0.119,
     "obstacle_contacts": [
       "post_1",
@@ -1258,15 +1256,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 18.82,
-    "x_m": 1.3805,
-    "max_lateral_m": 0.0275,
-    "max_tilt_deg": 8.06,
+    "seconds": 18.56,
+    "x_m": 1.383,
+    "max_lateral_m": 0.0408,
+    "max_tilt_deg": 8.05,
     "min_body_m": 0.0774,
-    "max_body_m": 0.1077,
+    "max_body_m": 0.1071,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 86,
+      "normal": 73,
       "narrow": 855
     }
   },
@@ -1355,11 +1353,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3631,
-    "max_lateral_m": 0.2686,
+    "x_m": 0.3478,
+    "max_lateral_m": 0.235,
     "max_tilt_deg": 19.16,
-    "min_body_m": 0.0555,
-    "max_body_m": 0.1474,
+    "min_body_m": 0.0561,
+    "max_body_m": 0.1483,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -1374,18 +1372,18 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 28.06,
-    "x_m": 3.4005,
-    "max_lateral_m": 0.0956,
-    "max_tilt_deg": 5.54,
+    "seconds": 28.14,
+    "x_m": 3.4018,
+    "max_lateral_m": 0.0572,
+    "max_tilt_deg": 5.71,
     "min_body_m": 0.0577,
-    "max_body_m": 0.114,
+    "max_body_m": 0.1164,
     "obstacle_contacts": [],
     "modes": {
       "normal": 35,
       "low": 392,
       "narrow": 633,
-      "rough": 343
+      "rough": 347
     }
   },
   {
@@ -1396,10 +1394,10 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 65.0,
-    "x_m": 0.7616,
-    "max_lateral_m": 0.3314,
-    "max_tilt_deg": 15.1,
-    "min_body_m": 0.0671,
+    "x_m": 0.8025,
+    "max_lateral_m": 0.3315,
+    "max_tilt_deg": 15.25,
+    "min_body_m": 0.0663,
     "max_body_m": 0.119,
     "obstacle_contacts": [
       "post_1",
@@ -1472,9 +1470,9 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.7794,
+    "x_m": 0.7793,
     "max_lateral_m": 0.3353,
-    "max_tilt_deg": 14.25,
+    "max_tilt_deg": 14.53,
     "min_body_m": 0.0645,
     "max_body_m": 0.1123,
     "obstacle_contacts": [
@@ -1492,15 +1490,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 18.2,
-    "x_m": 1.3817,
-    "max_lateral_m": 0.0495,
-    "max_tilt_deg": 6.3,
+    "seconds": 18.22,
+    "x_m": 1.3835,
+    "max_lateral_m": 0.032,
+    "max_tilt_deg": 6.56,
     "min_body_m": 0.0774,
-    "max_body_m": 0.1115,
+    "max_body_m": 0.1143,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 75,
+      "normal": 76,
       "narrow": 835
     }
   },
@@ -1589,11 +1587,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3502,
-    "max_lateral_m": 0.1583,
+    "x_m": 0.3495,
+    "max_lateral_m": 0.2401,
     "max_tilt_deg": 20.0,
-    "min_body_m": 0.0593,
-    "max_body_m": 0.1487,
+    "min_body_m": 0.0562,
+    "max_body_m": 0.1526,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -1608,15 +1606,15 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 28.16,
-    "x_m": 3.4026,
-    "max_lateral_m": 0.0495,
+    "seconds": 28.18,
+    "x_m": 3.4004,
+    "max_lateral_m": 0.0392,
     "max_tilt_deg": 5.08,
     "min_body_m": 0.0577,
-    "max_body_m": 0.1168,
+    "max_body_m": 0.1169,
     "obstacle_contacts": [],
     "modes": {
-      "normal": 39,
+      "normal": 40,
       "low": 392,
       "narrow": 633,
       "rough": 344
@@ -1630,9 +1628,9 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 65.0,
-    "x_m": 0.7969,
+    "x_m": 0.7617,
     "max_lateral_m": 0.3353,
-    "max_tilt_deg": 15.41,
+    "max_tilt_deg": 14.89,
     "min_body_m": 0.0645,
     "max_body_m": 0.1123,
     "obstacle_contacts": [
@@ -1704,18 +1702,19 @@
     "camera": "depth",
     "controller": "baseline",
     "accepted": false,
-    "outcome": "finish",
-    "seconds": 28.28,
-    "x_m": 1.3803,
+    "outcome": "timeout",
+    "seconds": 30.0,
+    "x_m": 1.0091,
     "max_lateral_m": 0.1798,
     "max_tilt_deg": 15.0,
-    "min_body_m": 0.0597,
+    "min_body_m": 0.0587,
     "max_body_m": 0.1216,
     "obstacle_contacts": [
+      "post_-1",
       "roof_low"
     ],
     "modes": {
-      "normal": 1414
+      "normal": 1500
     }
   },
   {
@@ -1726,11 +1725,11 @@
     "accepted": true,
     "outcome": "finish",
     "seconds": 18.2,
-    "x_m": 1.386,
-    "max_lateral_m": 0.0362,
-    "max_tilt_deg": 6.4,
+    "x_m": 1.3832,
+    "max_lateral_m": 0.036,
+    "max_tilt_deg": 6.12,
     "min_body_m": 0.0774,
-    "max_body_m": 0.1111,
+    "max_body_m": 0.1125,
     "obstacle_contacts": [],
     "modes": {
       "normal": 75,
@@ -1822,11 +1821,11 @@
     "accepted": false,
     "outcome": "timeout",
     "seconds": 30.0,
-    "x_m": 0.3662,
-    "max_lateral_m": 0.1361,
-    "max_tilt_deg": 17.45,
-    "min_body_m": 0.0578,
-    "max_body_m": 0.1501,
+    "x_m": 0.3586,
+    "max_lateral_m": 0.2894,
+    "max_tilt_deg": 18.37,
+    "min_body_m": 0.0566,
+    "max_body_m": 0.1486,
     "obstacle_contacts": [
       "barrier"
     ],
@@ -1841,18 +1840,18 @@
     "controller": "adaptive",
     "accepted": true,
     "outcome": "finish",
-    "seconds": 28.24,
-    "x_m": 3.4009,
-    "max_lateral_m": 0.0505,
+    "seconds": 28.32,
+    "x_m": 3.4024,
+    "max_lateral_m": 0.0507,
     "max_tilt_deg": 5.84,
     "min_body_m": 0.0578,
-    "max_body_m": 0.1203,
+    "max_body_m": 0.1206,
     "obstacle_contacts": [],
     "modes": {
       "normal": 35,
       "low": 392,
       "narrow": 648,
-      "rough": 337
+      "rough": 341
     }
   },
   {
@@ -1861,20 +1860,20 @@
     "camera": "depth",
     "controller": "baseline",
     "accepted": false,
-    "outcome": "finish",
-    "seconds": 48.62,
-    "x_m": 3.4025,
-    "max_lateral_m": 0.1798,
+    "outcome": "timeout",
+    "seconds": 65.0,
+    "x_m": 1.5197,
+    "max_lateral_m": 0.2782,
     "max_tilt_deg": 15.0,
-    "min_body_m": 0.0597,
-    "max_body_m": 0.136,
+    "min_body_m": 0.0587,
+    "max_body_m": 0.1334,
     "obstacle_contacts": [
+      "post_-1",
       "roof_low",
-      "wall_-1",
-      "wall_1"
+      "wall_-1"
     ],
     "modes": {
-      "normal": 2431
+      "normal": 3250
     }
   }
 ]
